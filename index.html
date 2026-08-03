@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>24Nav route planner</title>
+<meta name="description" content="Route planning, live traffic and vertical navigation for the ATC24 network.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira:wght@500;600;800&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles/tokens.css">
+<link rel="stylesheet" href="styles/planner.css">
+</head>
+<body>
+
+<!-- Power-up self test. Avionics run one, so this page does too. -->
+<div class="boot" id="boot" data-complete="false">
+  <div class="boot__mark">24<span>NAV</span></div>
+  <ul class="boot__tests" id="bootTests">
+    <li class="boot__test" data-test="chart" data-state="wait"><span>Chart database</span><span class="boot__result">Loaded</span></li>
+    <li class="boot__test" data-test="fixes" data-state="wait"><span>Navigation fixes</span><span class="boot__result">Loaded</span></li>
+    <li class="boot__test" data-test="airspace" data-state="wait"><span>Airspace boundaries</span><span class="boot__result">Loaded</span></li>
+    <li class="boot__test" data-test="profile" data-state="wait"><span>Vertical profile</span><span class="boot__result">Ready</span></li>
+  </ul>
+</div>
+
+<div class="app">
+
+  <header class="app__header">
+    <button class="tool rail__toggle" id="railToggle" type="button" aria-expanded="false">Route</button>
+    <div class="brand">24<span>NAV</span></div>
+
+    <div class="readouts">
+      <div class="readout readout--data">
+        <span class="u-label">Route</span>
+        <span class="readout__value" id="readoutRoute">No route</span>
+      </div>
+      <div class="readout readout--route">
+        <span class="u-label">Distance</span>
+        <span class="readout__value" id="readoutDistance">000.0 NM</span>
+      </div>
+      <div class="readout readout--ete">
+        <span class="u-label">Est. time</span>
+        <span class="readout__value" id="readoutEte">--:--</span>
+      </div>
+      <div class="readout">
+        <span class="u-label">Fixes</span>
+        <span class="readout__value" id="readoutFixes">0</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="app__body">
+
+    <aside class="rail" id="rail" data-open="false">
+      <div class="rail__head">
+        <div class="endpoints">
+          <label class="field">
+            <span class="u-label">Departure</span>
+            <select id="departure"></select>
+          </label>
+          <button class="swap" id="swap" type="button" title="Swap departure and arrival" aria-label="Swap departure and arrival">&#8646;</button>
+          <label class="field">
+            <span class="u-label">Arrival</span>
+            <select id="arrival"></select>
+          </label>
+        </div>
+        <label class="field">
+          <span class="u-label">Cruise flight level</span>
+          <input id="cruise" type="number" min="10" max="450" step="10" value="100" inputmode="numeric">
+        </label>
+      </div>
+
+      <div class="rail__body">
+        <ol class="strip" id="strip"></ol>
+        <div class="empty" id="stripEmpty">
+          <strong>Route is direct</strong>
+          Click any cyan fix on the chart to add it. Select a fix in this list first and the next one you click is inserted after it.
+        </div>
+      </div>
+    </aside>
+
+    <main class="chart" id="chart">
+      <svg class="chart__svg" id="chartSvg" viewBox="-600 -600 1200 1200" preserveAspectRatio="xMidYMid meet" role="application" aria-label="ATC24 enroute chart">
+        <g id="layerBase">
+          <image class="chart-base" href="maps/coast.svg" x="-600" y="-600" width="1200" height="1200" preserveAspectRatio="none"></image>
+          <image class="chart-base" href="maps/boundaries.svg" x="-600" y="-600" width="1200" height="1200" preserveAspectRatio="none"></image>
+        </g>
+        <g id="layerGrid"></g>
+        <g id="layerSectors"></g>
+        <g id="layerFixes"></g>
+        <g id="layerAirports"></g>
+        <g id="layerRoute"></g>
+        <g id="layerMeasure"></g>
+        <g id="layerTraffic"></g>
+      </svg>
+
+      <div class="chart__toolbar">
+        <button class="tool" id="toggleFixes" type="button" aria-pressed="true">Fixes</button>
+        <button class="tool" id="toggleSectors" type="button" aria-pressed="true">Airspace</button>
+        <button class="tool" id="toggleGrid" type="button" aria-pressed="false">Range rings</button>
+        <button class="tool tool--measure" id="toggleMeasure" type="button" aria-pressed="false">Measure</button>
+        <button class="tool" id="resetView" type="button" aria-pressed="false">Fit route</button>
+      </div>
+
+      <p class="chart__hint" id="chartHint"><b>Click a fix</b> to build the route. Drag to pan, scroll to zoom.</p>
+    </main>
+
+  </div>
+
+  <section class="profile" aria-label="Vertical profile">
+    <div class="profile__plot">
+      <svg class="profile__svg" id="profileSvg" viewBox="0 0 1000 220" role="img" aria-label="Vertical profile with cloud layers and speed limit envelope"></svg>
+    </div>
+    <div class="profile__legend">
+      <span class="u-label">Vertical navigation</span>
+      <span class="chip chip--path">Planned path</span>
+      <span class="chip chip--cloud">Cloud deck (ATIS)</span>
+      <span class="chip chip--limit">250 kt below 3000</span>
+      <span class="legend-note u-data" id="limitNote"></span>
+      <span class="chip chip--terrain">Surface</span>
+    </div>
+  </section>
+
+</div>
+
+<div class="banner" id="banner" data-active="false">
+  <span id="bannerText">Overspeed</span>
+</div>
+
+<script src="js/map-data.js"></script>
+<script src="js/chart.js"></script>
+<script src="js/route.js"></script>
+<script src="js/profile.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

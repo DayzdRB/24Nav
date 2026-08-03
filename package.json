@@ -1,0 +1,10 @@
+{
+  "name": "24nav",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Route planning, live traffic and vertical navigation for the ATC24 network.",
+  "engines": {
+    "node": ">=18"
+  }
+}

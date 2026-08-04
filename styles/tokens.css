@@ -1,0 +1,100 @@
+/* ==========================================================================
+   24Nav design tokens
+   Colour follows navigation-display grammar. Each colour means one thing and
+   is never used decoratively:
+     magenta  active route, next fix, anything the aircraft is flying to
+     cyan     filed data, constraints, chart reference information
+     green    engaged, valid, confirmed
+     amber    caution, advisory, cloud deck
+     red      warning, limit exceeded
+     white    current selection and primary readouts
+   ========================================================================== */
+
+:root {
+  /* --- surfaces ------------------------------------------------------- */
+  --bezel: #05080b;
+  --bezel-edge: #1b2732;
+  --glass: #0b1118;
+  --glass-raised: #121c26;
+  --glass-sunken: #070d13;
+  --chart-sea: #081820;
+  --chart-land: #0f2a32;
+
+  /* --- ND colour grammar ---------------------------------------------- */
+  --route: #ff54d6;
+  --route-dim: rgba(255, 84, 214, 0.18);
+  --data: #4fd8ff;
+  --data-dim: rgba(79, 216, 255, 0.16);
+  --engaged: #3ce88a;
+  --engaged-dim: rgba(60, 232, 138, 0.16);
+  --caution: #ffb020;
+  --caution-dim: rgba(255, 176, 32, 0.16);
+  --warn: #ff3b3b;
+  --warn-dim: rgba(255, 59, 59, 0.18);
+
+  /* --- text ----------------------------------------------------------- */
+  --ink: #e9f1f7;
+  --ink-2: #93a8b8;
+  --ink-3: #5d7183;
+  --ink-inverse: #05080b;
+
+  /* --- lines ---------------------------------------------------------- */
+  --rule: rgba(147, 168, 184, 0.16);
+  --rule-strong: rgba(147, 168, 184, 0.32);
+
+  /* --- type ----------------------------------------------------------- */
+  --font-display: "Saira", "Arial Narrow", sans-serif;
+  --font-body: "Barlow", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, monospace;
+
+  --fs-display: clamp(1.35rem, 2.2vw, 1.875rem);
+  --fs-xl: 1.3125rem;
+  --fs-lg: 1.0625rem;
+  --fs-md: 0.9375rem;
+  --fs-sm: 0.8125rem;
+  --fs-xs: 0.6875rem;
+
+  --track-label: 0.14em;
+  --track-display: -0.01em;
+
+  /* --- space ----------------------------------------------------------- */
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+
+  /* --- geometry -------------------------------------------------------- */
+  --r-sm: 3px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --rail-width: 20.5rem;
+  --profile-height: 12.5rem;
+  --header-height: 3.5rem;
+
+  /* --- depth ----------------------------------------------------------- */
+  --lift-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 6px 18px rgba(0, 0, 0, 0.5);
+  --lift-2: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 18px 44px rgba(0, 0, 0, 0.62);
+  --glow-route: 0 0 12px rgba(255, 84, 214, 0.35);
+  --glow-warn: 0 0 16px rgba(255, 59, 59, 0.45);
+
+  /* --- motion ---------------------------------------------------------- */
+  --t-fast: 120ms cubic-bezier(0.2, 0, 0.2, 1);
+  --t-mid: 220ms cubic-bezier(0.2, 0, 0.2, 1);
+  --t-slow: 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Symbol scale factor. Updated by chart.js on every zoom so map symbols hold
+   a constant on-screen size instead of ballooning with the viewBox. */
+:root {
+  --k: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 1ms;
+    --t-mid: 1ms;
+    --t-slow: 1ms;
+  }
+}

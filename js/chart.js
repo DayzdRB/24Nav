@@ -92,6 +92,7 @@ window.Nav = window.Nav || {};
 
       this.layers = {
         base: document.getElementById('layerBase'),
+        airportArt: document.getElementById('layerAirportArt'),
         grid: document.getElementById('layerGrid'),
         sectors: document.getElementById('layerSectors'),
         fixes: document.getElementById('layerFixes'),
@@ -110,6 +111,7 @@ window.Nav = window.Nav || {};
       this.points = { ...this.fixes, ...this.airports };
       this.sectors = Array.isArray(data.AIRSPACE_SECTORS) ? data.AIRSPACE_SECTORS : [];
 
+      this.drawAirportArt(data.AIRPORT_SVG_ASSETS);
       this.drawGrid();
       this.drawSectors();
       this.drawFixes();
@@ -177,6 +179,28 @@ window.Nav = window.Nav || {};
     },
 
     /* --- static layers -------------------------------------------------- */
+
+    /**
+     * Airport ground and runway artwork. Every one of these files is authored in
+     * the same -600..600 world viewBox as the coast layer, so each is a
+     * full-extent overlay that needs no positioning.
+     */
+    drawAirportArt(assets) {
+      const layer = this.layers.airportArt;
+      if (!layer || !assets) return;
+      clear(layer);
+      for (const [airport, files] of Object.entries(assets)) {
+        for (const file of files) {
+          const runway = String(file).startsWith('RWY');
+          layer.appendChild(el('image', {
+            class: runway ? 'airport-runway' : 'airport-ground',
+            href: `maps/${airport}/${file}`,
+            x: -MAP_HALF, y: -MAP_HALF, width: MAP_SPAN, height: MAP_SPAN,
+            preserveAspectRatio: 'none',
+          }));
+        }
+      }
+    },
 
     drawGrid() {
       const layer = this.layers.grid;
@@ -453,7 +477,17 @@ window.Nav = window.Nav || {};
         if (point) for (const handler of this.pickHandlers) handler(point, event);
       });
 
-      window.addEventListener('resize', () => this.setView({ ...this.view }));
+      // Right-clicking a chart should not open a browser context menu.
+      svg.addEventListener('contextmenu', (event) => event.preventDefault());
+
+      // Keep the viewBox aspect locked to the container. Without this the square
+      // viewBox letterboxes inside a wide panel and the chart floats in dead
+      // space, and the initial measurement happens before layout has settled.
+      const resync = () => this.setView({ ...this.view });
+      if (typeof ResizeObserver === 'function') {
+        new ResizeObserver(resync).observe(svg.parentElement || svg);
+      }
+      window.addEventListener('resize', resync);
     },
 
     onPick(handler) {

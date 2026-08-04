@@ -49,23 +49,21 @@ assets/audio/master-warning.mp3
 `cabin-chime.mp3` plays when the self test finishes. `master-warning.mp3` plays
 on the overspeed warning.
 
-## 4. Copy the chart artwork from 24FlightBrief
+## 4. Add the chart artwork
 
-The chart draws two vector layers you already own. From your `24Flightbrief`
-repository, copy this folder into `24nav` at the same path:
+The `maps/` folder ships with this build, so there is nothing to copy out of
+24FlightBrief. Use **Add file > Upload files** and drag the whole `maps` folder
+in at once. It is 240 files and about 4 MB, and GitHub preserves the structure.
 
-```
-maps/
-```
+If you already have `maps/` in the repository from an earlier attempt, uploading
+again simply overwrites identical files.
 
-The quickest route is to download the 24FlightBrief repo as a ZIP, pull
-`public/maps` out of it, and drag that folder into **Upload files** on `24nav`
-so it lands as `maps/`. Only `maps/coast.svg` and `maps/boundaries.svg` are
-used right now; the per-airport `GROUND.svg` and `RWY_*.svg` files get used when
-airport diagrams go in, so bring the whole folder.
-
-Without `maps/`, the page still works. You get fixes, airports, airspace
-sectors and the route, just no coastline underneath.
+These files are authored for a light background: land is `#333333`, aprons and
+taxiways are `#000000`, and every outline is stroked in `#000000`. That is why
+they looked missing on a dark chart. The stylesheet now inverts them, the same
+way your FlightBrief radar view does. Brightness is controlled by the `opacity`
+values on `.chart-base`, `.airport-ground` and `.airport-runway` in
+`styles/planner.css` if you want them louder or quieter.
 
 ## 5. Connect Vercel
 
@@ -116,28 +114,54 @@ skip this and have the relay call the function on a timer in the next step.
 
 ## What you should see
 
-1. A brief power-up self test, then the cabin chime.
-2. The chart with 24 airports, 112 fixes and 9 airspace sectors with their
-   center frequencies.
+1. A power-up self test, then an **Enter Flight Deck** button. Clicking it plays
+   the cabin chime and opens the planner. The chime rides on that click on
+   purpose: browsers refuse to play audio without a user gesture, which is why
+   it was silent before.
+2. The chart with the coastline, airspace boundaries, airport grounds and runway
+   markings, plus 24 airports, 112 fixes and 9 sectors with their center
+   frequencies.
 3. A default IRFD to IPPH route. Click any cyan fix to append it. Select a fix
    in the left list first and the next click inserts after it. The × removes it.
 4. Type a flight level into a fix row to force the profile through that altitude.
 5. **Measure** for a drag-anywhere distance line with both reciprocal headings.
-6. The profile strip: climb, cruise, descent, the 250 kt below 3000 ft envelope,
-   and cloud decks once ATIS is wired in the next step.
+6. **Airport ground** toggles the 67 ground and runway overlays off if you want
+   a clean enroute picture.
+7. **Hide** on the profile bar collapses the vertical profile. The choice is
+   remembered.
 
 Your route survives a refresh through `localStorage`. Nothing is stored
 server-side yet.
 
-## Known limitations at this step
+## What this step fixed
+
+- Text no longer highlights when you drag across the chart, and right-clicking
+  the chart or the profile no longer opens the browser menu.
+- The coast, boundaries, airport grounds and runways now render. They were always
+  loading; they were black artwork on a black chart.
+- The chart viewBox is now locked to its container aspect with a ResizeObserver,
+  so the map fills the panel instead of floating in dead space. The initial
+  measurement used to run before layout had settled.
+- The shell uses `100dvh` and the profile is height-clamped to 21vh, so
+  everything fits at 100% zoom. The collapse button covers short screens.
+- The chime plays reliably, on the entry click.
+
+## Still to come
+
+- Live traffic. Needs the relay, which is the next step.
+- Discord OAuth and saved plans. Step after that.
+- Cloud decks stay empty until the relay supplies ATIS. The parser is written and
+  tested against real ATIS bodies, including the case where `DEP RWY 26` must not
+  be mistaken for a cloud layer.
+- The overspeed warning is wired and tested but has nothing to watch yet.
+  `Nav.alerts.evaluate(aircraft)` is the entry point the relay will call.
+
+## Known limitations
 
 - Airport labels for IBTH and IUFO overlap at full-world zoom because they sit
-  31 map units apart. Zoom in and they separate. A label placement solver is not
-  worth building yet.
-- Cloud decks stay empty until the relay supplies ATIS.
-- The overspeed warning is wired and tested but has no live traffic to watch
-  yet. `Nav.alerts.evaluate(aircraft)` is the entry point the relay will call.
+  31 map units apart. Zoom in and they separate.
 - Climb and descent gradients assume 3000 fpm at 250 kt and 2500 fpm at 280 kt
-  on the game's speed scale, which works out to 1216 and 905 ft per NM. If your
-  aircraft climb differently, change the two constants at the top of
-  `js/profile.js`.
+  on the game's speed scale, which works out to 1216 and 905 ft per NM. Change
+  the two constants at the top of `js/profile.js` if your aircraft differ.
+- The 67 airport overlays are full-extent images, so heavy panning on a slow
+  machine may stutter. Turn **Airport ground** off if it does.

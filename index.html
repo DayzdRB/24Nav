@@ -13,7 +13,8 @@
 </head>
 <body>
 
-<!-- Power-up self test. Avionics run one, so this page does too. -->
+<!-- Power-up self test. The entry button supplies the user gesture browsers
+     require before they will play audio. -->
 <div class="boot" id="boot" data-complete="false">
   <div class="boot__mark">24<span>NAV</span></div>
   <ul class="boot__tests" id="bootTests">
@@ -22,9 +23,11 @@
     <li class="boot__test" data-test="airspace" data-state="wait"><span>Airspace boundaries</span><span class="boot__result">Loaded</span></li>
     <li class="boot__test" data-test="profile" data-state="wait"><span>Vertical profile</span><span class="boot__result">Ready</span></li>
   </ul>
+  <p class="boot__status" id="bootStatus">Running self test</p>
+  <button class="boot__enter" id="bootEnter" type="button" hidden>Enter Flight Deck</button>
 </div>
 
-<div class="app">
+<div class="app" id="app" data-profile="open">
 
   <header class="app__header">
     <button class="tool rail__toggle" id="railToggle" type="button" aria-expanded="false">Route</button>
@@ -81,11 +84,12 @@
     </aside>
 
     <main class="chart" id="chart">
-      <svg class="chart__svg" id="chartSvg" viewBox="-600 -600 1200 1200" preserveAspectRatio="xMidYMid meet" role="application" aria-label="ATC24 enroute chart">
+      <svg class="chart__svg" id="chartSvg" viewBox="-600 -600 1200 1200" role="application" aria-label="ATC24 enroute chart">
         <g id="layerBase">
           <image class="chart-base" href="maps/coast.svg" x="-600" y="-600" width="1200" height="1200" preserveAspectRatio="none"></image>
-          <image class="chart-base" href="maps/boundaries.svg" x="-600" y="-600" width="1200" height="1200" preserveAspectRatio="none"></image>
+          <image class="chart-base chart-base--boundaries" href="maps/boundaries.svg" x="-600" y="-600" width="1200" height="1200" preserveAspectRatio="none"></image>
         </g>
+        <g id="layerAirportArt"></g>
         <g id="layerGrid"></g>
         <g id="layerSectors"></g>
         <g id="layerFixes"></g>
@@ -96,6 +100,7 @@
       </svg>
 
       <div class="chart__toolbar">
+        <button class="tool" id="toggleGround" type="button" aria-pressed="true">Airport ground</button>
         <button class="tool" id="toggleFixes" type="button" aria-pressed="true">Fixes</button>
         <button class="tool" id="toggleSectors" type="button" aria-pressed="true">Airspace</button>
         <button class="tool" id="toggleGrid" type="button" aria-pressed="false">Range rings</button>
@@ -109,16 +114,19 @@
   </div>
 
   <section class="profile" aria-label="Vertical profile">
-    <div class="profile__plot">
-      <svg class="profile__svg" id="profileSvg" viewBox="0 0 1000 220" role="img" aria-label="Vertical profile with cloud layers and speed limit envelope"></svg>
-    </div>
-    <div class="profile__legend">
+    <div class="profile__bar">
       <span class="u-label">Vertical navigation</span>
-      <span class="chip chip--path">Planned path</span>
-      <span class="chip chip--cloud">Cloud deck (ATIS)</span>
-      <span class="chip chip--limit">250 kt below 3000</span>
       <span class="legend-note u-data" id="limitNote"></span>
-      <span class="chip chip--terrain">Surface</span>
+      <div class="profile__legend">
+        <span class="chip chip--path">Planned path</span>
+        <span class="chip chip--cloud">Cloud deck (ATIS)</span>
+        <span class="chip chip--limit">250 kt below 3000</span>
+        <span class="chip chip--terrain">Surface</span>
+      </div>
+      <button class="tool profile__collapse" id="profileCollapse" type="button" aria-expanded="true">Hide</button>
+    </div>
+    <div class="profile__plot" id="profilePlot">
+      <svg class="profile__svg" id="profileSvg" viewBox="0 0 1000 180" role="img" aria-label="Vertical profile with cloud layers and speed limit envelope"></svg>
     </div>
   </section>
 

@@ -11,6 +11,7 @@ window.Nav = window.Nav || {};
   'use strict';
 
   const SOUND_KEY = '24nav.sound';
+  const PROFILE_KEY = '24nav.profile';
   const OVERSPEED_KT = 250;
   const OVERSPEED_ALT = 3000;
   const WARNING_COOLDOWN_MS = 20000;
@@ -42,6 +43,7 @@ window.Nav = window.Nav || {};
 
     play(which) {
       if (!this.enabled()) return;
+      if (which === 'chime' && !this.chime) return;
       const audio = which === 'warning' ? this.warning : this.chime;
       if (!audio) return;
       audio.currentTime = 0;
@@ -198,6 +200,7 @@ window.Nav = window.Nav || {};
         window.Nav.chart.setLayer(name, next);
       });
     };
+    toggle(dom.toggleGround, 'airportArt');
     toggle(dom.toggleFixes, 'fixes');
     toggle(dom.toggleSectors, 'sectors');
     toggle(dom.toggleGrid, 'grid');
@@ -220,6 +223,24 @@ window.Nav = window.Nav || {};
       dom.railToggle.setAttribute('aria-expanded', String(next));
     });
 
+    dom.profileCollapse.addEventListener('click', () => {
+      const open = dom.app.dataset.profile !== 'collapsed';
+      dom.app.dataset.profile = open ? 'collapsed' : 'open';
+      dom.profileCollapse.textContent = open ? 'Show' : 'Hide';
+      dom.profileCollapse.setAttribute('aria-expanded', String(!open));
+      try {
+        window.localStorage.setItem(PROFILE_KEY, open ? 'collapsed' : 'open');
+      } catch (error) {
+        // Not worth failing the toggle over.
+      }
+      if (!open) window.Nav.profile.render();
+    });
+
+    // Panning a chart with the right button should not raise a context menu.
+    for (const node of document.querySelectorAll('.chart__svg, .profile__svg')) {
+      node.addEventListener('contextmenu', (event) => event.preventDefault());
+    }
+
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         if (window.Nav.route.selection) window.Nav.route.select(null);
@@ -239,10 +260,11 @@ window.Nav = window.Nav || {};
 
   async function boot() {
     for (const id of [
-      'boot', 'rail', 'railToggle', 'departure', 'arrival', 'cruise', 'swap',
-      'toggleFixes', 'toggleSectors', 'toggleGrid', 'toggleMeasure', 'resetView',
+      'app', 'boot', 'bootStatus', 'bootEnter', 'rail', 'railToggle',
+      'departure', 'arrival', 'cruise', 'swap', 'toggleGround', 'toggleFixes',
+      'toggleSectors', 'toggleGrid', 'toggleMeasure', 'resetView',
       'chartHint', 'readoutRoute', 'readoutDistance', 'readoutEte', 'readoutFixes',
-      'banner', 'bannerText',
+      'banner', 'bannerText', 'profileCollapse', 'profilePlot',
     ]) {
       dom[id] = document.getElementById(id);
     }
@@ -256,25 +278,39 @@ window.Nav = window.Nav || {};
       return;
     }
 
+    dom.bootStatus.textContent = 'Loading chart database';
     window.Nav.chart.init(data);
     pass('chart');
     await wait(110);
 
+    dom.bootStatus.textContent = 'Loading navigation fixes';
     populateSelects();
     window.Nav.route.restore();
     window.Nav.strip.init();
     pass('fixes');
     await wait(110);
 
+    dom.bootStatus.textContent = 'Reading airspace boundaries';
     window.Nav.chart.onPick((point) => window.Nav.route.addPoint(point));
     window.Nav.route.onChange(renderAll);
     bindControls();
     pass('airspace');
     await wait(110);
 
+    try {
+      if (window.localStorage.getItem(PROFILE_KEY) === 'collapsed') {
+        dom.app.dataset.profile = 'collapsed';
+        dom.profileCollapse.textContent = 'Show';
+        dom.profileCollapse.setAttribute('aria-expanded', 'false');
+      }
+    } catch (error) {
+      // Default to open.
+    }
+
     window.Nav.profile.init();
     renderAll();
     window.Nav.chart.fitTo(window.Nav.route.nodes());
+    dom.bootStatus.textContent = 'Building vertical profile';
     pass('profile');
 
     if (document.fonts?.ready) {
@@ -284,11 +320,38 @@ window.Nav = window.Nav || {};
         // Font loading is not worth blocking the page on.
       }
     }
-    await wait(260);
+    await wait(200);
 
-    dom.boot.dataset.complete = 'true';
-    sound.play('chime');
-    window.Nav.profile.render();
+    const dismiss = () => {
+      dom.boot.dataset.complete = 'true';
+      dom.boot.setAttribute('aria-hidden', 'true');
+      window.setTimeout(() => window.Nav.profile.render(), 60);
+    };
+
+    // Browsers will not play audio without a user gesture, so the chime rides on
+    // the entry click instead of firing on load and being silently blocked.
+    if (!sound.enabled()) {
+      dom.bootStatus.textContent = 'Flight deck ready';
+      await wait(320);
+      dismiss();
+      return;
+    }
+
+    dom.bootStatus.textContent = 'Flight deck ready';
+    dom.bootEnter.hidden = false;
+    window.setTimeout(() => dom.bootEnter.focus({ preventScroll: true }), 240);
+
+    dom.bootEnter.addEventListener('click', async () => {
+      dom.bootEnter.disabled = true;
+      dom.bootEnter.hidden = true;
+      dom.bootStatus.textContent = 'Welcome aboard';
+      try {
+        await sound.chime.play();
+      } catch (error) {
+        console.warn('Cabin chime could not play:', error);
+      }
+      dismiss();
+    }, { once: true });
   }
 
   window.Nav.alerts = alerts;

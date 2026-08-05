@@ -24,7 +24,7 @@ window.NAV_CONFIG = {
   // or a cached copy of the old ones.
   buildTag: 'step3',
 
-  relayUrl: '',
+  relayUrl: 'https://universalrelayhub.onrender.com',
 
   // Which ATC24 server to track against. 'auto' checks the main server and then
   // the event server, which is what you want almost always.

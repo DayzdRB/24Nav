@@ -106,7 +106,13 @@ window.Nav = window.Nav || {};
       let run = 0;
       return nodes.map((node, i) => {
         if (i > 0) run += window.Nav.geo.distanceNm(nodes[i - 1], node);
-        return { name: node.name, role: node.role, kind: node.kind, d: run, altitude: node.altitude };
+        return {
+          name: node.label || node.name,
+          role: node.role,
+          kind: node.kind,
+          d: run,
+          altitude: node.altitude,
+        };
       });
     },
 

@@ -35,6 +35,8 @@ window.Nav = window.Nav || {};
       heading: 0,
       speed: 0,
       callsign: '',
+      aircraftType: '',
+      emergency: false,
     },
 
     init() {
@@ -65,6 +67,7 @@ window.Nav = window.Nav || {};
           heading: window.Nav.geo.bearing(start, next),
           speed: window.Nav.route.planSpeedKt,
           callsign: window.Nav.route.plan.ingameCallsign || 'OWN',
+          aircraftType: window.Nav.route.plan.aircraft || '',
         });
       });
 
@@ -91,6 +94,9 @@ window.Nav = window.Nav || {};
         heading: Number(aircraft.heading) || 0,
         speed: Number(aircraft.speed) || 0,
         callsign: String(aircraft.displayCallsign || aircraft.filedCallsign || aircraft.realCallsign || ''),
+        // Drives which icon is drawn and whether it is tinted for an emergency.
+        aircraftType: String(aircraft.aircraftType || ''),
+        emergency: Boolean(aircraft.isEmergencyOccurring ?? aircraft.isEmergencyOccuring),
       };
       this.render();
       window.Nav.chart.drawOwnship(this.state);
@@ -183,7 +189,7 @@ window.Nav = window.Nav || {};
         turnDeg,
         instruction: Math.abs(turnDeg) <= ON_COURSE_DEG ? 'On course'
           : turnDeg > 0 ? 'Turn right' : 'Turn left',
-        toName: leg.to.name,
+        toName: leg.to.label || leg.to.name,
         toNm: leg.nm * (1 - active.t),
         alongNm: this.distanceToLegStart(active.index) + leg.nm * active.t,
       };

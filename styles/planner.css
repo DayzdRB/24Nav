@@ -2115,6 +2115,7 @@ textarea {
 /* --- attribution --------------------------------------------------------- */
 
 .attribution {
+  pointer-events: none;
   position: absolute;
   right: var(--s3);
   bottom: var(--s2);
@@ -2124,6 +2125,7 @@ textarea {
 }
 
 .attribution a {
+  pointer-events: auto;
   color: var(--ink-3);
 }
 

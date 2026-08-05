@@ -100,6 +100,34 @@ window.Nav = window.Nav || {};
       };
     },
 
+    /**
+     * Endpoint position. This is the threshold of the runway in use, not the
+     * airport reference point: you line up on 25L and you land on 33, so every
+     * distance, heading and final approach is measured from the threshold.
+     * IBAR and IUFO have no runway data, so those fall back to the airport point.
+     */
+    endpointNode(role) {
+      const code = role === 'departure' ? this.departure : this.arrival;
+      const label = role === 'departure' ? this.departureRunway : this.arrivalRunway;
+      const airport = this.point(code);
+      if (!airport) return null;
+      const runway = this.runwayGeometry(code, label);
+      if (!runway) {
+        return { ...airport, role, altitude: 0, runway: null, label: code };
+      }
+      return {
+        name: code,
+        kind: 'airport',
+        role,
+        altitude: 0,
+        runway: runway.label,
+        heading: runway.heading,
+        x: runway.x,
+        y: runway.y,
+        label: `${code}/${runway.label}`,
+      };
+    },
+
     extensionPoint(role) {
       const state = role === 'departure' ? this.depExt : this.arrExt;
       if (!state.on) return null;
@@ -107,7 +135,8 @@ window.Nav = window.Nav || {};
       if (!geometry) return null;
       const units = state.nm * window.Nav.geo.MAP_UNITS_PER_NM;
       return {
-        name: `${geometry.runway}/${state.nm.toFixed(1)}`,
+        name: `${geometry.runway}+${state.nm.toFixed(1)}`,
+        label: `${geometry.runway}+${state.nm.toFixed(1)} NM`,
         kind: 'extension',
         role: role === 'departure' ? 'depExt' : 'arrExt',
         runway: geometry.runway,
@@ -120,22 +149,22 @@ window.Nav = window.Nav || {};
 
     nodes() {
       const list = [];
-      const dep = this.point(this.departure);
-      if (dep) list.push({ ...dep, role: 'departure', altitude: 0 });
+      const dep = this.endpointNode('departure');
+      if (dep) list.push(dep);
 
       const depExt = this.extensionPoint('departure');
       if (depExt) list.push({ ...depExt, altitude: null });
 
       for (const fix of this.fixes) {
         const point = this.point(fix.name);
-        if (point) list.push({ ...point, role: 'fix', altitude: fix.altitude });
+        if (point) list.push({ ...point, label: point.name, role: 'fix', altitude: fix.altitude });
       }
 
       const arrExt = this.extensionPoint('arrival');
       if (arrExt) list.push({ ...arrExt, altitude: null });
 
-      const arr = this.point(this.arrival);
-      if (arr) list.push({ ...arr, role: 'arrival', altitude: 0 });
+      const arr = this.endpointNode('arrival');
+      if (arr) list.push(arr);
       return list;
     },
 
@@ -524,7 +553,7 @@ window.Nav = window.Nav || {};
         const body = document.createElement('span');
         const name = document.createElement('span');
         name.className = 'leg__name';
-        name.textContent = node.name;
+        name.textContent = node.label || node.name;
         const meta = document.createElement('span');
         meta.className = 'leg__meta';
         const inbound = legs[i - 1];

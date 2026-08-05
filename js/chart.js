@@ -580,7 +580,7 @@ window.Nav = window.Nav || {};
       svg.addEventListener('pointerdown', (event) => {
         svg.setPointerCapture(event.pointerId);
         pointers.set(event.pointerId, event);
-        downAt = { x: event.clientX, y: event.clientY };
+        downAt = { x: event.clientX, y: event.clientY, target: event.target };
 
         if (pointers.size === 2) {
           const [a, b] = [...pointers.values()];
@@ -657,11 +657,12 @@ window.Nav = window.Nav || {};
         this.setView({ x: panFrom.map.x - dx, y: panFrom.map.y - dy, w: panFrom.view.w });
       });
 
-      const release = (event) => {
+      const release = (event, kind) => {
         pointers.delete(event.pointerId);
         if (pointers.size < 2) pinch = null;
         if (pointers.size > 0) return;
 
+        const wasDragging = Boolean(drag);
         if (drag?.kind === 'ext') {
           const state = drag.role === 'departure' ? window.Nav.route.depExt : window.Nav.route.arrExt;
           window.Nav.route.setExtensionFromDrag(drag.role, state.nm, true);
@@ -674,18 +675,27 @@ window.Nav = window.Nav || {};
           if (!this.measure.end) this.measure = null;
           this.drawMeasure();
         }
+
+        if (kind === 'up' && !wasDragging) pick(event);
       };
-      svg.addEventListener('pointerup', release);
-      svg.addEventListener('pointercancel', release);
+      svg.addEventListener('pointerup', (event) => release(event, 'up'));
+      svg.addEventListener('pointercancel', (event) => release(event, 'cancel'));
 
-      const pick = (event) => {
-        if (this.measureEnabled) return;
-        // Measured in pixels rather than counting move events, because a plain
-        // click can still emit several of them.
-        if (downAt && Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) > CLICK_SLOP_PX) return;
-        if (event.target.closest?.('[data-ext],[data-ownship]')) return;
+      /**
+       * Selection runs on pointerup against the target recorded at pointerdown,
+       * not on the click event. Calling setPointerCapture above makes the browser
+       * retarget click to the SVG root, so closest('.pick') would always miss and
+       * nothing would ever be selected.
+       */
+      function pick(event) {
+        if (chart.measureEnabled) return;
+        const target = downAt?.target;
+        if (!target) return;
+        // Measured in pixels, because a plain tap still emits several moves.
+        if (Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) > CLICK_SLOP_PX) return;
+        if (target.closest?.('[data-ext],[data-ownship]')) return;
 
-        const anchorNode = event.target.closest?.('[data-route-anchor]');
+        const anchorNode = target.closest?.('[data-route-anchor]');
         if (anchorNode) {
           const type = anchorNode.dataset.routeAnchor;
           const index = Number(anchorNode.dataset.anchorIndex);
@@ -693,13 +703,13 @@ window.Nav = window.Nav || {};
           return;
         }
 
-        const group = event.target.closest?.('.pick');
+        const group = target.closest?.('.pick');
         if (!group) return;
-        const point = this.points[group.dataset.name];
+        const point = chart.points[group.dataset.name];
         if (!point) return;
-        for (const handler of this.pickHandlers) handler(point, event);
-      };
-      svg.addEventListener('click', pick);
+        for (const handler of chart.pickHandlers) handler(point, event);
+      }
+
       svg.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
         const group = event.target.closest?.('.pick');

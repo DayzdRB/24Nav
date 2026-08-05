@@ -310,6 +310,8 @@ window.Nav = window.Nav || {};
           heading: this.aircraft.heading,
           speed: this.aircraft.speed,
           isOnGround: this.aircraft.isOnGround,
+          aircraftType: this.aircraft.aircraftType,
+          isEmergencyOccurring: this.aircraft.isEmergencyOccurring,
           displayCallsign: this.flightPlan?.callsign || this.aircraft.telemetryCallsign,
         });
         window.Nav.alerts.evaluate(this.aircraft);

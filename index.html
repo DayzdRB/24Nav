@@ -231,6 +231,7 @@
       </div>
     </aside>
 
+    <div class="stage">
     <main class="chart" id="chart">
       <svg class="chart__svg" id="chartSvg" viewBox="-600 -600 1200 1200" role="application" aria-label="ATC24 enroute chart">
         <g id="layerBase">
@@ -260,37 +261,60 @@
       </div>
 
       <p class="chart__hint" id="chartHint"><b>Click a fix</b> to build the route. Drag to pan, scroll to zoom.</p>
-    </main>
 
-  </div>
-
-  <section class="deck" aria-label="Navigation instruments and vertical profile">
-
-    <div class="deck__instruments">
-      <div class="inst" id="navLateral" data-state="idle" data-call="ok">
-        <div class="inst__head">
-          <span class="u-label">Lateral</span>
-          <span class="inst__call" id="navLateralCall">No guidance</span>
+      <!-- Chart popover, following the DHL dispatch map: clicking a fix asks
+           where it should go instead of guessing. -->
+      <div class="popover" id="addPopover" role="dialog" aria-live="polite" hidden>
+        <strong class="popover__title" id="addTitle">Fix</strong>
+        <p class="popover__msg" id="addMsg"></p>
+        <div class="popover__actions" id="addFixActions">
+          <button class="tool tool--primary" id="addToRoute" type="button">Add to route</button>
+          <button class="tool" id="addToEnd" type="button">Add to end</button>
         </div>
-        <div class="inst__scale inst__scale--h" id="navLateralBar">
-          <span class="inst__centre"></span>
-          <span class="inst__diamond" id="navLateralDiamond" style="--offset:0"></span>
+        <div class="popover__actions" id="addAirportActions" hidden>
+          <button class="tool tool--primary" id="setDeparture" type="button">Set departure</button>
+          <button class="tool" id="setArrival" type="button">Set arrival</button>
         </div>
-        <dl class="inst__data">
-          <div><dt>Course</dt><dd class="u-data" id="navLateralDtk">---</dd></div>
-          <div><dt>Track</dt><dd class="u-data" id="navLateralTrack">---</dd></div>
-          <div><dt>Off track</dt><dd class="u-data" id="navLateralXtk">--</dd></div>
-          <div><dt>Next</dt><dd class="u-data" id="navLateralNext">--</dd></div>
-        </dl>
+        <button class="tool tool--ghost" id="addCancel" type="button">Cancel</button>
       </div>
 
-      <div class="inst" id="navVertical" data-state="idle" data-call="ok">
+      <p class="attribution">Aircraft icons by <a href="https://adsb-radar.com/" target="_blank" rel="noopener">ADS-B Radar</a></p>
+    </main>
+
+      <!-- Lateral guidance sits directly under the chart and shares its width,
+           so the deviation scale is centred on the chart centre. -->
+      <div class="hnav">
+        <div class="inst inst--wide" id="navLateral" data-state="idle" data-call="ok">
+          <div class="inst__widehead">
+            <span class="u-label">Lateral</span>
+            <span class="inst__call" id="navLateralCall">No guidance</span>
+            <dl class="inst__data inst__data--row">
+              <div><dt>Course</dt><dd class="u-data" id="navLateralDtk">---</dd></div>
+              <div><dt>Track</dt><dd class="u-data" id="navLateralTrack">---</dd></div>
+              <div><dt>Off track</dt><dd class="u-data" id="navLateralXtk">--</dd></div>
+              <div><dt>Next</dt><dd class="u-data" id="navLateralNext">--</dd></div>
+            </dl>
+          </div>
+          <div class="inst__scale inst__scale--h" id="navLateralBar">
+            <span class="inst__centre"></span>
+            <span class="inst__tick" style="--at:25%"></span>
+            <span class="inst__tick" style="--at:75%"></span>
+            <span class="inst__diamond" id="navLateralDiamond" style="--offset:0"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="vnav">
+      <div class="inst inst--tall" id="navVertical" data-state="idle" data-call="ok">
         <div class="inst__head">
           <span class="u-label">Vertical</span>
-          <span class="inst__call" id="navVerticalCall">No guidance</span>
         </div>
+        <span class="inst__call" id="navVerticalCall">No guidance</span>
         <div class="inst__scale inst__scale--v" id="navVerticalBar">
           <span class="inst__centre"></span>
+          <span class="inst__tick inst__tick--v" style="--at:25%"></span>
+          <span class="inst__tick inst__tick--v" style="--at:75%"></span>
           <span class="inst__diamond" id="navVerticalDiamond" style="--offset:0"></span>
         </div>
         <dl class="inst__data">
@@ -304,7 +328,7 @@
       <div class="inst inst--own">
         <div class="inst__head">
           <span class="u-label">Aircraft</span>
-          <span class="inst__source" id="navSource" data-state="none">No aircraft</span>
+          <span class="inst__source" id="navSource" data-state="none">None</span>
         </div>
         <button class="tool" id="simEnable" type="button">Drop marker</button>
         <div class="grid-2">
@@ -313,13 +337,17 @@
             <input id="simAltitude" type="number" min="0" max="60000" step="100" value="0" inputmode="numeric">
           </label>
           <label class="field">
-            <span class="u-label">Heading</span>
+            <span class="u-label">Hdg</span>
             <input id="simHeading" type="number" min="0" max="360" step="1" value="0" inputmode="numeric">
           </label>
         </div>
-        <p class="inst__note">Drag the aircraft on the chart to rehearse. Tracking a live flight takes over automatically.</p>
+        <p class="inst__note">Drag the aircraft on the chart to rehearse. A tracked flight takes over.</p>
       </div>
-    </div>
+    </aside>
+
+  </div>
+
+  <section class="deck" aria-label="Vertical profile">
 
     <div class="profile">
       <div class="profile__bar">

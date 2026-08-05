@@ -442,15 +442,90 @@ window.Nav = window.Nav || {};
     }
     if (route.selection?.type === 'fix') {
       const name = route.fixes[route.selection.index]?.name;
-      dom.chartHint.innerHTML = `Inserting after <b>${name}</b>. Click a fix on the chart, or click ${name} in the list again to stop.`;
+      dom.chartHint.innerHTML = `<b>${name}</b> is the insertion point. Click a fix to add it after ${name}.`;
       return;
     }
     if (route.selection?.type) {
-      dom.chartHint.innerHTML = `<b>${route.selection.type === 'departure' ? 'Departure' : 'Arrival'}</b> selected. Click an airport to change it.`;
+      dom.chartHint.innerHTML = `<b>${route.selection.type === 'departure' ? 'Departure' : 'Arrival'}</b> is the insertion point. Click a fix on the chart.`;
       return;
     }
-    dom.chartHint.innerHTML = '<b>Click a fix</b> to add it to the end of the route. Drag to pan, scroll to zoom.';
+    dom.chartHint.innerHTML = '<b>Click a fix</b> and choose where it goes. Click a route point first to insert after it.';
   }
+
+  /* --- add-waypoint popover --------------------------------------------- */
+
+  /**
+   * Clicking a chart symbol asks where it should go rather than guessing, which
+   * is how the DHL dispatch map behaves. The insertion anchor is whichever route
+   * point is selected, set either by clicking it on the chart or by picking a row
+   * in the route strip.
+   */
+  const addFlow = {
+    pending: null,
+
+    open(point, event) {
+      this.pending = point;
+      const airport = point.kind === 'airport';
+      const anchor = window.Nav.route.selection;
+      const anchorName = anchor?.type === 'fix' ? window.Nav.route.fixes[anchor.index]?.name
+        : anchor?.type === 'departure' ? window.Nav.route.departure
+        : anchor?.type === 'arrival' ? window.Nav.route.arrival
+        : null;
+
+      dom.addTitle.textContent = point.name;
+      dom.addFixActions.hidden = airport;
+      dom.addAirportActions.hidden = !airport;
+
+      if (airport) {
+        dom.addMsg.textContent = 'Set this airport as the departure or the arrival.';
+      } else if (anchorName && anchor.type !== 'arrival') {
+        dom.addMsg.textContent = `Insert after ${anchorName}, or place it at the end of the route.`;
+        dom.addToRoute.textContent = `Insert after ${anchorName}`;
+      } else {
+        dom.addMsg.textContent = 'Choose where this fix should be added. Select a route point first to insert after it.';
+        dom.addToRoute.textContent = 'Add to route';
+      }
+
+      dom.addPopover.hidden = false;
+      this.place(event);
+      window.setTimeout(() => {
+        const first = airport ? dom.setDeparture : dom.addToRoute;
+        first.focus({ preventScroll: true });
+      }, 0);
+    },
+
+    /** Keeps the panel inside the chart, whether opened by pointer or keyboard. */
+    place(event) {
+      const host = dom.chart.getBoundingClientRect();
+      let x = event?.clientX;
+      let y = event?.clientY;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        const rect = event?.target?.getBoundingClientRect?.();
+        x = rect ? rect.left + rect.width / 2 : host.left + host.width / 2;
+        y = rect ? rect.top + rect.height / 2 : host.top + host.height / 2;
+      }
+      const width = dom.addPopover.offsetWidth || 240;
+      const height = dom.addPopover.offsetHeight || 150;
+      dom.addPopover.style.left = `${Math.max(8, Math.min(host.width - width - 8, x - host.left + 12))}px`;
+      dom.addPopover.style.top = `${Math.max(8, Math.min(host.height - height - 8, y - host.top + 12))}px`;
+    },
+
+    close() {
+      this.pending = null;
+      dom.addPopover.hidden = true;
+    },
+
+    commit(mode) {
+      const point = this.pending;
+      this.close();
+      if (!point) return;
+      if (point.kind === 'airport') {
+        window.Nav.route.setEndpoint(mode, point.name);
+        return;
+      }
+      window.Nav.route.addPoint(point, mode);
+    },
+  };
 
   /* --- controls --------------------------------------------------------- */
 
@@ -603,6 +678,22 @@ window.Nav = window.Nav || {};
     // --- master caution ---------------------------------------------------
     dom.caution.addEventListener('click', () => window.Nav.alerts.acknowledge());
 
+    // --- add-waypoint popover --------------------------------------------
+    dom.addToRoute.addEventListener('click', () => addFlow.commit('anchor'));
+    dom.addToEnd.addEventListener('click', () => addFlow.commit('end'));
+    dom.setDeparture.addEventListener('click', () => addFlow.commit('departure'));
+    dom.setArrival.addEventListener('click', () => addFlow.commit('arrival'));
+    dom.addCancel.addEventListener('click', () => addFlow.close());
+
+    // Clicking away closes it, but not when the click lands on another symbol,
+    // because that click is about to open the panel again.
+    document.addEventListener('pointerdown', (event) => {
+      if (dom.addPopover.hidden) return;
+      if (dom.addPopover.contains(event.target)) return;
+      if (event.target.closest?.('.pick')) return;
+      addFlow.close();
+    });
+
     const toggle = (button, name) => {
       button.addEventListener('click', () => {
         const next = button.getAttribute('aria-pressed') !== 'true';
@@ -654,6 +745,10 @@ window.Nav = window.Nav || {};
 
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return;
+      if (!dom.addPopover.hidden) {
+        addFlow.close();
+        return;
+      }
       if (route.selection) route.select(null);
       if (window.Nav.chart.measureEnabled) dom.toggleMeasure.click();
     });
@@ -684,7 +779,9 @@ window.Nav = window.Nav || {};
       'tabAtis', 'tabLive', 'atisCards', 'atisNote', 'atisRunways', 'atisRefresh',
       'relayUrl', 'relayConnect', 'relayProbe', 'relayStatus', 'filedPlan',
       'trackQuery', 'trackStart', 'trackStop', 'trackFromPlan',
-      'caution', 'cautionTitle', 'cautionDetail', 'linkState',
+      'caution', 'cautionTitle', 'cautionDetail', 'linkState', 'chart',
+      'addPopover', 'addTitle', 'addMsg', 'addFixActions', 'addAirportActions',
+      'addToRoute', 'addToEnd', 'setDeparture', 'setArrival', 'addCancel',
     ]) {
       dom[id] = document.getElementById(id);
     }
@@ -711,7 +808,7 @@ window.Nav = window.Nav || {};
     await wait(110);
 
     dom.bootStatus.textContent = 'Reading airspace boundaries';
-    window.Nav.chart.onPick((point) => window.Nav.route.addPoint(point));
+    window.Nav.chart.onPick((point, event) => addFlow.open(point, event));
     window.Nav.route.onChange(renderAll);
     window.Nav.instruments.init();
     bindControls();

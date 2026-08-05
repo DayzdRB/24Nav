@@ -348,8 +348,26 @@ window.Nav = window.Nav || {};
         layer.appendChild(group);
       }
 
+      let fixIndex = -1;
       for (const node of list) {
-        const group = el('g', { transform: `translate(${node.x} ${node.y}) scale(${k})` });
+        if (node.role === 'fix') fixIndex += 1;
+        const anchor = node.role === 'departure' ? 'departure'
+          : node.role === 'arrival' ? 'arrival'
+          : node.role === 'fix' ? 'fix' : '';
+        const group = el('g', {
+          class: anchor ? 'route-anchor' : null,
+          'data-route-anchor': anchor || null,
+          'data-anchor-index': anchor === 'fix' ? String(fixIndex) : null,
+          tabindex: anchor ? '0' : null,
+          transform: `translate(${node.x} ${node.y}) scale(${k})`,
+        });
+        if (anchor) group.appendChild(el('circle', { class: 'pick-hit', cx: 0, cy: 0, r: 12 }));
+        const selection = window.Nav.route?.selection;
+        if (anchor && selection?.type === anchor
+          && (anchor !== 'fix' || selection.index === fixIndex)) {
+          group.dataset.selected = 'true';
+          group.appendChild(el('circle', { class: 'anchor-halo', cx: 0, cy: 0, r: 12 }));
+        }
         if (node.kind === 'airport') {
           // A thin open ring, so the airport symbol and its ground artwork stay
           // readable underneath instead of being covered by a filled disc.
@@ -416,6 +434,43 @@ window.Nav = window.Nav || {};
       }
     },
 
+    /* --- aircraft icons -------------------------------------------------- */
+
+    /**
+     * Icon for an ATC24 aircraft type string, using the same mapping as the DHL
+     * dispatch map. Artwork is the ADS-B Radar pack: 512x512, nose up, solid
+     * black, so rotate(heading) points it correctly and a filter recolours it.
+     */
+    aircraftIconPath(type) {
+      const n = String(type || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (/a380/.test(n)) return 'aircraft-icons/a380.svg';
+      if (/a340|a350/.test(n)) return 'aircraft-icons/a340.svg';
+      if (/a330/.test(n)) return 'aircraft-icons/a330.svg';
+      if (/a32|a319|a320|a321/.test(n)) return 'aircraft-icons/a320.svg';
+      if (/a220/.test(n)) return 'aircraft-icons/a0.svg';
+      if (/an225|antonov225/.test(n)) return 'aircraft-icons/a7.svg';
+      if (/b787|787/.test(n)) return 'aircraft-icons/b787.svg';
+      if (/b777|777/.test(n)) return 'aircraft-icons/b777.svg';
+      if (/b767|767/.test(n)) return 'aircraft-icons/b767.svg';
+      if (/b747|747/.test(n)) return 'aircraft-icons/b747.svg';
+      if (/b737|737/.test(n)) return 'aircraft-icons/b737.svg';
+      if (/md11/.test(n)) return 'aircraft-icons/md11.svg';
+      if (/e195|e190/.test(n)) return 'aircraft-icons/e195.svg';
+      if (/erj|embraer/.test(n)) return 'aircraft-icons/erj.svg';
+      if (/crj/.test(n)) return 'aircraft-icons/crjx.svg';
+      if (/dash8|q400|dh8|atr72/.test(n)) return 'aircraft-icons/dh8a.svg';
+      if (/f100/.test(n)) return 'aircraft-icons/f100.svg';
+      if (/c130|hercules/.test(n)) return 'aircraft-icons/c130.svg';
+      if (/cessna|c172|c182|caravan/.test(n)) return 'aircraft-icons/cessna.svg';
+      if (/lear/.test(n)) return 'aircraft-icons/learjet.svg';
+      if (/gulfstream|glf/.test(n)) return 'aircraft-icons/glf5.svg';
+      if (/falcon|fa7x/.test(n)) return 'aircraft-icons/fa7x.svg';
+      if (/f15/.test(n)) return 'aircraft-icons/f15.svg';
+      if (/f5/.test(n)) return 'aircraft-icons/f5.svg';
+      if (/f11|fighter/.test(n)) return 'aircraft-icons/f11.svg';
+      return 'aircraft-icons/c0.svg';
+    },
+
     /* --- ownship -------------------------------------------------------- */
 
     drawOwnship(state) {
@@ -428,16 +483,24 @@ window.Nav = window.Nav || {};
         class: 'ownship',
         'data-ownship': 'true',
         'data-source': state.source,
+        'data-emergency': String(Boolean(state.emergency)),
         transform: `translate(${state.x} ${state.y}) scale(${k})`,
         tabindex: '0',
         role: 'button',
       });
-      group.appendChild(el('circle', { class: 'pick-hit', cx: 0, cy: 0, r: 14 }));
+      group.appendChild(el('circle', { class: 'pick-hit', cx: 0, cy: 0, r: 16 }));
+      const size = 38;
       const body = el('g', { transform: `rotate(${Number(state.heading) || 0})` });
-      body.appendChild(el('polygon', { class: 'ownship-symbol', points: '0,-9 6,7 0,4 -6,7' }));
+      body.appendChild(el('image', {
+        class: 'ownship-icon',
+        href: this.aircraftIconPath(state.aircraftType),
+        x: -size / 2, y: -size / 2, width: size, height: size,
+      }));
       group.appendChild(body);
-      group.appendChild(el('text', { class: 'ownship-label', y: -13 },
-        `${state.callsign || 'OWN'}  ${Math.round(state.altitude)}`));
+      group.appendChild(el('text', { class: 'ownship-label', y: -23 },
+        state.callsign || 'OWN'));
+      group.appendChild(el('text', { class: 'ownship-label ownship-label--meta', y: 31 },
+        `${window.Nav.profile.formatAltitude(state.altitude)}  ${Math.round(state.speed || 0)} kt`));
       group.appendChild(el('title', {}, 'Drag to move the aircraft'));
       layer.appendChild(group);
     },
@@ -621,6 +684,15 @@ window.Nav = window.Nav || {};
         // click can still emit several of them.
         if (downAt && Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) > CLICK_SLOP_PX) return;
         if (event.target.closest?.('[data-ext],[data-ownship]')) return;
+
+        const anchorNode = event.target.closest?.('[data-route-anchor]');
+        if (anchorNode) {
+          const type = anchorNode.dataset.routeAnchor;
+          const index = Number(anchorNode.dataset.anchorIndex);
+          window.Nav.route.setAnchor(type === 'fix' ? { type, index } : { type });
+          return;
+        }
+
         const group = event.target.closest?.('.pick');
         if (!group) return;
         const point = this.points[group.dataset.name];

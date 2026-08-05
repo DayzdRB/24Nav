@@ -243,8 +243,34 @@ textarea {
 
 .app__body {
   display: grid;
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--vnav-width);
   min-height: 0;
+}
+
+/* The chart and the lateral bar share a column, so the bar spans exactly the
+   chart's width and its centre line sits on the chart's centre. */
+.stage {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.hnav {
+  padding: var(--s2) var(--s3) var(--s3);
+  border-top: 1px solid var(--bezel-edge);
+  background: linear-gradient(180deg, var(--glass-raised), var(--glass));
+}
+
+.vnav {
+  display: grid;
+  align-content: start;
+  gap: var(--s2);
+  width: var(--vnav-width);
+  padding: var(--s2);
+  border-left: 1px solid var(--bezel-edge);
+  background: var(--glass);
+  overflow-y: auto;
 }
 
 /* --- header -------------------------------------------------------------- */
@@ -762,17 +788,9 @@ textarea {
 
 .deck {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  height: var(--deck-height);
+  height: var(--profile-height);
   border-top: 1px solid var(--bezel-edge);
   background: linear-gradient(180deg, var(--glass), var(--bezel));
-}
-
-.deck__instruments {
-  display: flex;
-  gap: var(--s2);
-  padding: var(--s2) var(--s3);
-  border-right: 1px solid var(--rule);
 }
 
 .profile {
@@ -784,6 +802,10 @@ textarea {
 }
 
 .app[data-profile="collapsed"] .deck {
+  height: auto;
+}
+
+.profile {
   height: auto;
 }
 
@@ -1889,6 +1911,254 @@ textarea {
   }
 
   .readout--link {
+    display: none;
+  }
+}
+
+
+/* --- wide lateral bar under the chart ------------------------------------- */
+
+.inst--wide {
+  display: grid;
+  gap: var(--s2);
+  width: auto;
+  padding: var(--s2) var(--s3);
+}
+
+.inst__widehead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s4);
+}
+
+.inst--wide .inst__call {
+  min-width: 8rem;
+  font-size: var(--fs-lg);
+}
+
+.inst__data--row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s5);
+  margin-left: auto;
+}
+
+.inst__data--row > div {
+  gap: var(--s2);
+}
+
+.inst--wide .inst__scale--h {
+  height: 1.5rem;
+}
+
+/* --- tall vertical bar beside the chart ---------------------------------- */
+
+.inst--tall {
+  width: auto;
+  gap: var(--s2);
+}
+
+.inst--tall .inst__call {
+  font-size: var(--fs-md);
+  text-align: center;
+}
+
+.inst--tall .inst__scale--v {
+  height: 11rem;
+}
+
+.inst--own {
+  width: auto;
+}
+
+/* Scale graticule, so deflection reads as a quantity not just a direction. */
+.inst__tick {
+  position: absolute;
+  top: 22%;
+  bottom: 22%;
+  left: var(--at);
+  width: 1px;
+  background: var(--rule);
+}
+
+.inst__tick--v {
+  top: var(--at);
+  right: 22%;
+  bottom: auto;
+  left: 22%;
+  width: auto;
+  height: 1px;
+}
+
+/* --- aircraft icons ------------------------------------------------------ */
+
+/* The ADS-B Radar artwork is solid black at 512 square with the nose up.
+   brightness(0) invert(1) makes it reliably white whatever the source fill,
+   then a coloured glow carries the state instead of a fragile tint chain. */
+.ownship-icon {
+  filter: brightness(0) invert(1) drop-shadow(0 0 5px var(--caution));
+}
+
+.ownship[data-source="live"] .ownship-icon {
+  filter: brightness(0) invert(1) drop-shadow(0 0 6px var(--engaged));
+}
+
+.ownship[data-emergency="true"] .ownship-icon {
+  filter: brightness(0) invert(1) drop-shadow(0 0 7px var(--warn));
+}
+
+.ownship-label {
+  fill: var(--caution);
+}
+
+.ownship[data-source="live"] .ownship-label {
+  fill: var(--engaged);
+}
+
+.ownship[data-emergency="true"] .ownship-label {
+  fill: var(--warn);
+}
+
+.ownship-label--meta {
+  font-size: 8px;
+  opacity: 0.85;
+}
+
+/* --- route anchors ------------------------------------------------------- */
+
+.route-anchor {
+  cursor: pointer;
+}
+
+.anchor-halo {
+  fill: none;
+  stroke: var(--route);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+/* --- add-waypoint popover ------------------------------------------------ */
+
+.popover {
+  position: absolute;
+  z-index: 30;
+  display: grid;
+  gap: var(--s2);
+  width: 15rem;
+  padding: var(--s3);
+  border: 1px solid var(--route);
+  border-radius: var(--r-md);
+  background: rgba(11, 17, 24, 0.97);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--lift-2);
+}
+
+.popover[hidden] {
+  display: none;
+}
+
+.popover__title {
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--route);
+}
+
+.popover__msg {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.popover__actions {
+  display: grid;
+  gap: var(--s1);
+}
+
+.popover__actions[hidden] {
+  display: none;
+}
+
+.popover .tool {
+  justify-content: center;
+  padding: var(--s2);
+  border-color: var(--rule-strong);
+  color: var(--ink);
+}
+
+.popover .tool:hover {
+  border-color: var(--data);
+  color: var(--data);
+}
+
+.popover .tool--primary {
+  border-color: var(--route);
+  background: var(--route-dim);
+  color: var(--ink);
+}
+
+.popover .tool--primary:hover {
+  background: rgba(255, 84, 214, 0.3);
+  border-color: var(--route);
+  color: var(--ink);
+}
+
+.popover .tool--ghost {
+  border-color: transparent;
+  color: var(--ink-3);
+}
+
+/* --- attribution --------------------------------------------------------- */
+
+.attribution {
+  position: absolute;
+  right: var(--s3);
+  bottom: var(--s2);
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+.attribution a {
+  color: var(--ink-3);
+}
+
+.attribution a:hover {
+  color: var(--data);
+}
+
+/* --- narrow screens ------------------------------------------------------ */
+
+@media (max-width: 86rem) {
+  :root {
+    --vnav-width: 9.5rem;
+  }
+
+  .inst__data--row > div:nth-child(n + 3) {
+    display: none;
+  }
+}
+
+@media (max-width: 68rem) {
+  .app__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vnav {
+    position: absolute;
+    top: var(--header-height);
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    border-left: 1px solid var(--bezel-edge);
+    box-shadow: var(--lift-2);
+  }
+
+  .inst--own {
     display: none;
   }
 }

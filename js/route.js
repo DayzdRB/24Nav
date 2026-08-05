@@ -312,18 +312,18 @@ window.Nav = window.Nav || {};
       this.commit();
     },
 
-    addPoint(point) {
+    /**
+     * Adds a fix to the route. `mode` mirrors the two actions on the chart
+     * popover: 'anchor' inserts relative to the currently selected route point,
+     * 'end' always appends. After an insert the anchor moves to the new fix so
+     * clicking several fixes in a row builds the route in order.
+     */
+    addPoint(point, mode = 'anchor') {
       if (!point) return;
 
-      if (this.selection?.type === 'departure' && point.kind === 'airport') {
-        return this.setEndpoint('departure', point.name);
-      }
-      if (this.selection?.type === 'arrival' && point.kind === 'airport') {
-        return this.setEndpoint('arrival', point.name);
-      }
-
-      const at = this.selection?.type === 'fix' ? this.selection.index + 1
-        : this.selection?.type === 'departure' ? 0
+      const anchored = mode === 'anchor' ? this.selection : null;
+      const at = anchored?.type === 'fix' ? Math.min(this.fixes.length, anchored.index + 1)
+        : anchored?.type === 'departure' ? 0
         : this.fixes.length;
 
       const before = this.fixes[at - 1]?.name;
@@ -337,6 +337,12 @@ window.Nav = window.Nav || {};
       this.fixes.splice(at, 0, { name: point.name, altitude: null });
       this.selection = { type: 'fix', index: at };
       return this.commit();
+    },
+
+    /** Anchor selection, set by clicking a route point on the chart or a row. */
+    setAnchor(anchor) {
+      this.selection = anchor;
+      this.commit();
     },
 
     removeFix(index) {

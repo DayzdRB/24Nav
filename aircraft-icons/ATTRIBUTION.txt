@@ -1,0 +1,4 @@
+Aircraft icons by ADS-B Radar for macOS.
+https://adsb-radar.com/
+
+The icon pack supplied with the previous FlightBrief project permits personal and commercial use with a backlink attribution to ADS-B Radar.

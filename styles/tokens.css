@@ -70,7 +70,9 @@
   --r-md: 6px;
   --r-lg: 10px;
   --rail-width: 20.5rem;
-  --profile-height: clamp(8.5rem, 21vh, 13rem);
+  --profile-height: clamp(9rem, 22vh, 14rem);
+  /* dvh where supported, so mobile browser chrome cannot clip the panel. */
+  --profile-height: clamp(9rem, 22dvh, 14rem);
   --deck-height: clamp(10.5rem, 25vh, 14.5rem);
   --inst-width: 8.75rem;
   --vnav-width: 11rem;

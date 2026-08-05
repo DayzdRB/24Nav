@@ -230,6 +230,8 @@ textarea {
   grid-template-rows: var(--header-height) minmax(0, 1fr) auto;
   height: 100vh;
   height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .app__header {
@@ -788,9 +790,31 @@ textarea {
 
 .deck {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   height: var(--profile-height);
+  min-height: 0;
   border-top: 1px solid var(--bezel-edge);
   background: linear-gradient(180deg, var(--glass), var(--bezel));
+  /* Clipping here rather than at the page level, so a tall profile bar can never
+     push its own plot off the bottom of the window. */
+  overflow: hidden;
+}
+
+/* Drag the top edge to resize. Small viewports and browser chrome vary too much
+   to pick one height that suits everyone. */
+.deck__grip {
+  height: 7px;
+  border-bottom: 1px solid var(--rule);
+  background:
+    linear-gradient(90deg, transparent 46%, var(--rule-strong) 46%, var(--rule-strong) 54%, transparent 54%)
+    center / 3rem 2px no-repeat;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.deck__grip:hover,
+.deck__grip:focus-visible {
+  background-color: var(--glass-raised);
 }
 
 .profile {
@@ -798,14 +822,12 @@ textarea {
   grid-template-rows: auto minmax(0, 1fr);
   gap: var(--s2);
   min-width: 0;
+  min-height: 0;
   padding: var(--s2) var(--s4) var(--s3);
+  overflow: hidden;
 }
 
 .app[data-profile="collapsed"] .deck {
-  height: auto;
-}
-
-.profile {
   height: auto;
 }
 
@@ -814,13 +836,16 @@ textarea {
   align-items: center;
   gap: var(--s3);
   min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .profile__legend {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--s2) var(--s4);
   margin-left: auto;
+  overflow: hidden;
 }
 
 .profile__collapse {
@@ -1000,7 +1025,7 @@ textarea {
 
 @media (max-width: 62rem) {
   :root {
-    --profile-height: clamp(7.5rem, 24vh, 10rem);
+    --profile-height: clamp(7rem, 26dvh, 10rem);
   }
 
   .profile__legend {
@@ -1369,6 +1394,10 @@ textarea {
 
 .command__note[data-state="ok"] {
   color: var(--engaged);
+}
+
+#relayDetail {
+  word-break: break-word;
 }
 
 .tool--copy[aria-pressed] {

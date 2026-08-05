@@ -211,7 +211,9 @@
           <div class="row-actions">
             <button class="tool" id="relayConnect" type="button">Connect</button>
             <button class="tool" id="relayProbe" type="button">Test</button>
+            <button class="tool" id="relayBuiltIn" type="button">Use built-in</button>
           </div>
+          <p class="command__note" id="relayDetail"></p>
 
           <label class="field">
             <span class="u-label">Track aircraft</span>
@@ -348,6 +350,8 @@
   </div>
 
   <section class="deck" aria-label="Vertical profile">
+    <div class="deck__grip" id="deckGrip" role="separator" aria-orientation="horizontal" tabindex="0"
+         aria-label="Resize the vertical profile" title="Drag to resize, or use the arrow keys"></div>
 
     <div class="profile">
       <div class="profile__bar">
@@ -369,6 +373,7 @@
 
 </div>
 
+<script src="js/config.js"></script>
 <script src="js/map-data.js"></script>
 <script src="js/runway-data.js"></script>
 <script src="js/chart.js"></script>

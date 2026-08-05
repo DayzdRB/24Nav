@@ -13,6 +13,7 @@ window.Nav = window.Nav || {};
 
   const SOUND_KEY = '24nav.sound';
   const PROFILE_KEY = '24nav.profile';
+  const DECK_KEY = '24nav.deckHeight';
   const OVERSPEED_KT = 250;
   const OVERSPEED_ALT = 3000;
   const GAME_KNOT_TO_REAL = 0.592172785;
@@ -352,8 +353,16 @@ window.Nav = window.Nav || {};
     dom.linkState.textContent = summary.label;
     dom.linkState.dataset.state = summary.state;
 
+    dom.relayDetail.textContent = summary.detail
+      || (summary.url ? `Talking to ${summary.wsUrl}` : 'No relay address set. Put one in js/config.js, or type one here.');
+    dom.relayDetail.dataset.state = summary.detail ? 'warn' : summary.state === 'open' ? 'ok' : '';
+    dom.relayBuiltIn.hidden = !summary.configured || !summary.overridden;
+
     const lines = [
+      ['Build', window.NAV_CONFIG?.buildTag || 'unset'],
       ['Relay', summary.label],
+      ['Address', summary.url ? summary.url.replace(/^https?:\/\//, '') : 'not set'],
+      ['Source', summary.overridden ? 'this browser' : summary.configured ? 'config.js' : 'unset'],
       ['Upstream', summary.upstreamOk ? 'Connected' : summary.upstreamState],
       ['Aircraft seen', summary.counts ? String(summary.counts.aircraftMain ?? 0) : '--'],
       ['ATIS held', summary.counts ? String(summary.counts.atis ?? 0) : '--'],
@@ -658,6 +667,7 @@ window.Nav = window.Nav || {};
         dom.chartHint.innerHTML = '<b>Relay unreachable.</b> Check the address, and that ALLOWED_ORIGINS on Render includes this site.';
       }
     });
+    dom.relayBuiltIn.addEventListener('click', () => live.useBuiltIn());
     dom.trackStart.addEventListener('click', () => live.setTrack(dom.trackQuery.value));
     dom.trackStop.addEventListener('click', () => live.setTrack(''));
     dom.trackFromPlan.addEventListener('click', () => {
@@ -748,6 +758,42 @@ window.Nav = window.Nav || {};
       if (!open) window.Nav.profile.render();
     });
 
+    // --- resize the vertical profile --------------------------------------
+    const MIN_DECK = 96;
+    const maxDeck = () => Math.round(window.innerHeight * 0.6);
+    const setDeckHeight = (px) => {
+      const clamped = Math.max(MIN_DECK, Math.min(maxDeck(), Math.round(px)));
+      document.documentElement.style.setProperty('--profile-height', `${clamped}px`);
+      try {
+        window.localStorage.setItem(DECK_KEY, String(clamped));
+      } catch (error) {
+        // Height is not worth failing over.
+      }
+      window.Nav.profile.render();
+      return clamped;
+    };
+
+    let gripFrom = null;
+    dom.deckGrip.addEventListener('pointerdown', (event) => {
+      dom.deckGrip.setPointerCapture(event.pointerId);
+      gripFrom = { y: event.clientY, height: dom.deckGrip.parentElement.getBoundingClientRect().height };
+      event.preventDefault();
+    });
+    dom.deckGrip.addEventListener('pointermove', (event) => {
+      if (!gripFrom) return;
+      // Dragging up makes the panel taller, which is the direction the edge moves.
+      setDeckHeight(gripFrom.height + (gripFrom.y - event.clientY));
+    });
+    const gripEnd = () => { gripFrom = null; };
+    dom.deckGrip.addEventListener('pointerup', gripEnd);
+    dom.deckGrip.addEventListener('pointercancel', gripEnd);
+    dom.deckGrip.addEventListener('keydown', (event) => {
+      const step = event.key === 'ArrowUp' ? 16 : event.key === 'ArrowDown' ? -16 : 0;
+      if (!step) return;
+      event.preventDefault();
+      setDeckHeight(dom.deckGrip.parentElement.getBoundingClientRect().height + step);
+    });
+
     // Panning a chart with the right button should not raise a context menu.
     for (const node of document.querySelectorAll('.chart__svg, .profile__svg')) {
       node.addEventListener('contextmenu', (event) => event.preventDefault());
@@ -788,7 +834,8 @@ window.Nav = window.Nav || {};
       'chartHint', 'readoutRoute', 'readoutDistance', 'readoutEte', 'readoutCruise',
       'profileCollapse', 'profilePlot',
       'tabAtis', 'tabLive', 'atisCards', 'atisNote', 'atisRunways', 'atisRefresh',
-      'relayUrl', 'relayConnect', 'relayProbe', 'relayStatus', 'filedPlan',
+      'relayUrl', 'relayConnect', 'relayProbe', 'relayBuiltIn', 'relayStatus',
+      'relayDetail', 'filedPlan', 'deckGrip',
       'trackQuery', 'trackStart', 'trackStop', 'trackFromPlan',
       'caution', 'cautionTitle', 'cautionDetail', 'linkState', 'chart',
       'addPopover', 'addTitle', 'addMsg', 'addFixActions', 'addAirportActions',
@@ -838,6 +885,15 @@ window.Nav = window.Nav || {};
     window.Nav.live.connect();
     pass('relay');
     await wait(110);
+
+    try {
+      const savedDeck = Number(window.localStorage.getItem(DECK_KEY));
+      if (Number.isFinite(savedDeck) && savedDeck >= 96) {
+        document.documentElement.style.setProperty('--profile-height', `${savedDeck}px`);
+      }
+    } catch (error) {
+      // Fall back to the stylesheet value.
+    }
 
     try {
       if (window.localStorage.getItem(PROFILE_KEY) === 'collapsed') {

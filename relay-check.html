@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>24Nav relay check</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira:wght@600;800&family=Barlow:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles/tokens.css">
+<style>
+  body {
+    margin: 0;
+    padding: 2rem 1.25rem 4rem;
+    background: var(--bezel);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.5;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 {
+    margin: 0 0 0.25rem;
+    font-family: var(--font-display);
+    font-size: 1.75rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+  h1 span { color: var(--route); }
+  .lede { margin: 0 0 1.75rem; color: var(--ink-2); }
+  .row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; }
+  input {
+    flex: 1 1 18rem;
+    min-width: 0;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-sm);
+    background: var(--glass-sunken);
+    color: var(--ink);
+    font-family: var(--font-data);
+    font-size: 0.9375rem;
+  }
+  button {
+    padding: 0.6rem 1.25rem;
+    border: 1px solid var(--route);
+    border-radius: var(--r-sm);
+    background: var(--route-dim);
+    color: var(--ink);
+    font-family: var(--font-display);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  button:hover { background: rgba(255, 84, 214, 0.3); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  ol { margin: 0; padding: 0; list-style: none; }
+  li {
+    display: grid;
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+    gap: 0 1rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .tag {
+    font-family: var(--font-display);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  li[data-state="pass"] .tag { color: var(--engaged); }
+  li[data-state="fail"] .tag { color: var(--warn); }
+  li[data-state="warn"] .tag { color: var(--caution); }
+  li[data-state="info"] .tag { color: var(--data); }
+  .name { font-weight: 500; }
+  .detail {
+    grid-column: 2;
+    margin-top: 0.2rem;
+    font-family: var(--font-data);
+    font-size: 0.8125rem;
+    color: var(--ink-2);
+    word-break: break-word;
+    white-space: pre-wrap;
+    user-select: text;
+  }
+  .verdict {
+    margin-top: 1.75rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-md);
+    background: var(--glass-sunken);
+  }
+  .verdict[data-state="fail"] { border-color: var(--warn); }
+  .verdict[data-state="pass"] { border-color: var(--engaged); }
+  .verdict h2 {
+    margin: 0 0 0.4rem;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .verdict p { margin: 0 0 0.6rem; }
+  .verdict p:last-child { margin-bottom: 0; }
+  code {
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    background: var(--glass-raised);
+    font-family: var(--font-data);
+    font-size: 0.85em;
+    color: var(--data);
+    user-select: text;
+  }
+  a { color: var(--data); }
+</style>
+</head>
+<body>
+<main>
+  <h1>24<span>NAV</span> relay check</h1>
+  <p class="lede">Runs from this page, in this browser, against your Universal Relay. Every request goes out with the same origin 24Nav uses, so whatever fails here is what fails there.</p>
+
+  <div class="row">
+    <input id="url" type="text" spellcheck="false" autocomplete="off" placeholder="your-relay.onrender.com">
+    <button id="run" type="button">Run checks</button>
+  </div>
+
+  <ol id="results"></ol>
+  <div class="verdict" id="verdict" hidden></div>
+</main>
+
+<script src="js/config.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  const results = document.getElementById('results');
+  const verdict = document.getElementById('verdict');
+  const urlInput = document.getElementById('url');
+  const runButton = document.getElementById('run');
+
+  // Prefill from config.js, then from anything 24Nav saved in this browser.
+  let prefill = window.NAV_CONFIG?.relayUrl || '';
+  try {
+    prefill = window.localStorage.getItem('24nav.relay') || prefill;
+  } catch (error) {
+    // Storage can be blocked. The field just starts empty.
+  }
+  urlInput.value = prefill;
+
+  function normalize(input) {
+    let text = String(input || '').trim().replace(/\/+$/, '');
+    if (!text) return '';
+    if (!/^[a-z]+:\/\//i.test(text)) text = `https://${text}`;
+    let parsed;
+    try {
+      parsed = new URL(text);
+    } catch (error) {
+      return '';
+    }
+    parsed.protocol = 'https:';
+    const path = parsed.pathname.replace(/\/v1\/live\/?$/, '').replace(/\/+$/, '');
+    return parsed.origin + path;
+  }
+
+  function add(state, name, detail) {
+    const item = document.createElement('li');
+    item.dataset.state = state;
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = { pass: 'pass', fail: 'fail', warn: 'warn', info: 'info', run: '...' }[state] || state;
+    const label = document.createElement('span');
+    label.className = 'name';
+    label.textContent = name;
+    item.appendChild(tag);
+    item.appendChild(label);
+    if (detail) {
+      const note = document.createElement('span');
+      note.className = 'detail';
+      note.textContent = detail;
+      item.appendChild(note);
+    }
+    results.appendChild(item);
+    return item;
+  }
+
+  function say(state, html) {
+    verdict.hidden = false;
+    verdict.dataset.state = state;
+    verdict.innerHTML = `<h2>What to do</h2>${html}`;
+  }
+
+  const timeout = (ms) => new Promise((_, reject) =>
+    window.setTimeout(() => reject(new Error(`timed out after ${ms / 1000}s`)), ms));
+
+  async function run() {
+    results.replaceChildren();
+    verdict.hidden = true;
+    runButton.disabled = true;
+
+    const base = normalize(urlInput.value);
+    add('info', 'Build', window.NAV_CONFIG?.buildTag
+      || 'unset, so js/config.js is missing or stale');
+    add('info', 'This page origin', window.location.origin);
+    add('info', 'Relay address', base || 'nothing entered');
+
+    if (!base) {
+      say('fail', '<p>Enter your Render hostname above and run again.</p>');
+      runButton.disabled = false;
+      return;
+    }
+
+    // 1. Is anything there at all? no-cors succeeds even when the allowlist
+    // rejects us, which is what separates "unreachable" from "blocked".
+    let reachable = false;
+    const opaque = add('run', 'Host is reachable', 'contacting the host, ignoring CORS');
+    try {
+      await Promise.race([fetch(`${base}/health`, { mode: 'no-cors', cache: 'no-store' }), timeout(35000)]);
+      reachable = true;
+      opaque.dataset.state = 'pass';
+      opaque.querySelector('.detail').textContent = 'the host answered something';
+    } catch (error) {
+      opaque.dataset.state = 'fail';
+      opaque.querySelector('.detail').textContent = String(error.message || error);
+    }
+
+    // 2. Now the same request with CORS, which is what the app actually does.
+    let allowed = false;
+    let health = null;
+    const cors = add('run', 'CORS allows this origin', `GET ${base}/health`);
+    try {
+      const response = await Promise.race([fetch(`${base}/health`, { mode: 'cors', cache: 'no-store' }), timeout(35000)]);
+      health = await response.json().catch(() => null);
+      allowed = response.ok;
+      cors.dataset.state = response.ok ? 'pass' : 'fail';
+      cors.querySelector('.detail').textContent = `HTTP ${response.status}`;
+    } catch (error) {
+      cors.dataset.state = 'fail';
+      cors.querySelector('.detail').textContent = String(error.message || error);
+    }
+
+    // 3. Upstream health and cache sizes.
+    if (allowed) {
+      const status = add('run', 'Upstream 24data link', `GET ${base}/v1/status`);
+      try {
+        const response = await fetch(`${base}/v1/status`, { mode: 'cors', cache: 'no-store' });
+        const payload = await response.json();
+        const up = payload?.upstream || {};
+        const counts = payload?.counts || {};
+        const ok = Boolean(up.connected);
+        status.dataset.state = ok ? 'pass' : 'warn';
+        status.querySelector('.detail').textContent =
+          `state ${up.state || '?'}, connected ${ok}\naircraft ${counts.aircraftMain ?? '?'} main / ${counts.aircraftEvent ?? '?'} event\n`
+          + `flight plans ${counts.flightPlansMain ?? '?'}, ATIS ${counts.atis ?? '?'}, controllers ${counts.controllers ?? '?'}\n`
+          + `last upstream message ${up.lastMessageAt || 'never'}${up.lastError ? `\nlast error ${up.lastError}` : ''}`;
+      } catch (error) {
+        status.dataset.state = 'fail';
+        status.querySelector('.detail').textContent = String(error.message || error);
+      }
+    }
+
+    // 4. The WebSocket, which is the part that actually carries live traffic.
+    let socketOk = false;
+    let socketDetail = '';
+    if (reachable) {
+      const wsUrl = `${base.replace(/^https/, 'wss')}/v1/live`;
+      const ws = add('run', 'WebSocket /v1/live', wsUrl);
+      try {
+        socketDetail = await new Promise((resolve, reject) => {
+          let settled = false;
+          const socket = new WebSocket(wsUrl);
+          const done = (fn, value) => {
+            if (settled) return;
+            settled = true;
+            try { socket.close(); } catch (error) { /* already gone */ }
+            fn(value);
+          };
+          window.setTimeout(() => done(reject, new Error('no hello within 35s')), 35000);
+          socket.addEventListener('open', () => {
+            socket.send(JSON.stringify({ type: 'subscribe', topics: ['status', 'atis'] }));
+          });
+          socket.addEventListener('message', (event) => {
+            let message = null;
+            try { message = JSON.parse(event.data); } catch (error) { return; }
+            if (message.type === 'hello') {
+              const caps = (message.capabilities || []).join(', ');
+              done(resolve, `hello received, capabilities: ${caps || 'none listed'}`);
+            }
+          });
+          // Browsers hide the HTTP status of a refused upgrade on purpose, so a
+          // close with no hello is the only signal available.
+          socket.addEventListener('close', (event) =>
+            done(reject, new Error(`closed before hello, code ${event.code}`)));
+          socket.addEventListener('error', () => done(reject, new Error('socket error')));
+        });
+        socketOk = true;
+        ws.dataset.state = 'pass';
+        ws.querySelector('.detail').textContent = socketDetail;
+      } catch (error) {
+        ws.dataset.state = 'fail';
+        ws.querySelector('.detail').textContent = String(error.message || error);
+      }
+    }
+
+    // 5. ATIS, since an empty cache looks like a broken site.
+    if (allowed) {
+      const atis = add('run', 'ATIS cache', `GET ${base}/v1/atis`);
+      try {
+        const response = await fetch(`${base}/v1/atis`, { mode: 'cors', cache: 'no-store' });
+        const payload = await response.json();
+        const list = payload?.data || [];
+        atis.dataset.state = list.length ? 'pass' : 'warn';
+        atis.querySelector('.detail').textContent = list.length
+          ? `${list.length} airports: ${list.map((i) => i?.parsed?.airport).filter(Boolean).join(', ')}`
+          : 'no reports held yet. The relay only learns an ATIS when a controller updates one, so this is normal on a quiet network.';
+      } catch (error) {
+        atis.dataset.state = 'fail';
+        atis.querySelector('.detail').textContent = String(error.message || error);
+      }
+    }
+
+    /* --- verdict ---------------------------------------------------------- */
+
+    if (!reachable) {
+      say('fail', `<p>Nothing answered at <code>${base}</code>, so this is not a CORS problem.</p>
+        <p>Check the hostname against your Render dashboard. If it is right, the service is probably asleep or failed to boot: open <code>${base}/health</code> in a new tab, wait for it, then run this again. Free instances take up to a minute on the first hit.</p>`);
+    } else if (!allowed) {
+      say('fail', `<p>The host answered, but not to this origin. That is <code>ALLOWED_ORIGINS</code>.</p>
+        <p>On Render, set it to include exactly <code>${window.location.origin}</code>, with no trailing slash:</p>
+        <p><code>ALLOWED_ORIGINS=${window.location.origin}</code></p>
+        <p>Comma-separate more than one. Note that a Vercel preview deployment has a different hostname from production, so if this page is a preview URL you need that hostname too.</p>`);
+    } else if (!socketOk) {
+      say('fail', `<p>REST works and CORS is fine, but the WebSocket would not complete: ${socketDetail || 'it closed before saying hello'}.</p>
+        <p>The upgrade handler checks the origin separately from the CORS headers, so an allowlist that is nearly right can pass the fetch and still reject the socket. Confirm <code>ALLOWED_ORIGINS</code> contains <code>${window.location.origin}</code> character for character.</p>`);
+    } else if (!health?.upstreamConnected) {
+      say('warn', `<p>Your relay is healthy and 24Nav can talk to it. The relay's own link to 24data is not connected, so there is no live traffic to serve yet.</p>
+        <p>Check the Render logs. The usual causes are the upstream refusing a third connection, since 24data allows only three, or a restart still settling. REST polling can still populate aircraft and ATIS.</p>`);
+    } else {
+      say('pass', `<p>Everything passed. Put this address in <code>js/config.js</code> as <code>relayUrl</code> and commit it:</p>
+        <p><code>relayUrl: '${base.split('//')[1] || base}'</code></p>
+        <p>Then open 24Nav, go to the Live tab, enter your Roblox username or in-game callsign and press Track. You must be spawned and moving in ATC24 for a match.</p>`);
+    }
+
+    runButton.disabled = false;
+  }
+
+  runButton.addEventListener('click', run);
+  urlInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') run();
+  });
+  if (prefill) run();
+})();
+</script>
+</body>
+</html>

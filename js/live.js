@@ -41,13 +41,31 @@ window.Nav = window.Nav || {};
     /* --- configuration --------------------------------------------------- */
 
     load() {
+      let stored = '';
       try {
-        this.url = window.localStorage.getItem(RELAY_KEY) || '';
+        stored = window.localStorage.getItem(RELAY_KEY) || '';
         this.trackQuery = window.localStorage.getItem(TRACK_KEY) || '';
       } catch (error) {
-        this.url = '';
         this.trackQuery = '';
       }
+      this.configured = this.normalizeUrl(window.NAV_CONFIG?.relayUrl || '');
+      // A stored address is an explicit override, so it wins. Otherwise fall back
+      // to whatever js/config.js ships with, which is what makes tracking work
+      // straight after a deploy without anyone typing anything.
+      this.url = this.normalizeUrl(stored) || this.configured;
+      this.overridden = Boolean(stored) && stored !== this.configured;
+    },
+
+    /** Drops a saved override and goes back to the address in js/config.js. */
+    useBuiltIn() {
+      try {
+        window.localStorage.removeItem(RELAY_KEY);
+      } catch (error) {
+        // Nothing to remove.
+      }
+      this.overridden = false;
+      this.url = this.configured;
+      this.reconnect(true);
     },
 
     save() {
@@ -94,6 +112,7 @@ window.Nav = window.Nav || {};
       const next = this.normalizeUrl(input);
       if (next === this.url) return;
       this.url = next;
+      this.overridden = next !== this.configured;
       this.save();
       this.reconnect(true);
     },
@@ -149,16 +168,22 @@ window.Nav = window.Nav || {};
         this.handle(message);
       });
 
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', (event) => {
         this.socket = null;
-        if (this.state !== 'stopped') {
-          this.setState('closed');
-          this.scheduleRetry();
-        }
+        if (this.state === 'stopped') return;
+        // A close before any message usually means the upgrade was refused, and
+        // the overwhelmingly common cause is ALLOWED_ORIGINS not listing this
+        // site. Browsers deliberately hide the status code, so say so plainly
+        // rather than reporting a bare failure.
+        const neverOpened = !this.lastMessageAt;
+        this.setState('closed', neverOpened
+          ? 'Refused or dropped before any data. Check the address, and that ALLOWED_ORIGINS on Render lists this exact origin.'
+          : `Connection closed${event?.code ? ` (${event.code})` : ''}. Retrying.`);
+        this.scheduleRetry();
       });
 
       socket.addEventListener('error', () => {
-        this.setState('error', 'WebSocket error');
+        this.setState('error', 'Could not reach the relay WebSocket.');
       });
     },
 
@@ -237,16 +262,29 @@ window.Nav = window.Nav || {};
     },
 
     async probe() {
-      if (!this.httpBase()) return null;
+      if (!this.httpBase()) {
+        this.detail = 'No relay address set.';
+        this.emit();
+        return null;
+      }
       try {
         const response = await fetch(`${this.httpBase()}/v1/status`, { mode: 'cors' });
-        if (!response.ok) return null;
+        if (!response.ok) {
+          this.detail = `Relay answered ${response.status}.`;
+          this.emit();
+          return null;
+        }
         const payload = await response.json();
         this.upstream = payload?.upstream || null;
         this.counts = payload?.counts || null;
         this.emit();
+        this.detail = '';
         return payload;
       } catch (error) {
+        // A cross-origin block and a sleeping instance look identical from here,
+        // so name both rather than guessing.
+        this.detail = 'No answer. Either the address is wrong, ALLOWED_ORIGINS does not list this site, or a free Render instance is still waking up.';
+        this.emit();
         return null;
       }
     },
@@ -444,6 +482,11 @@ window.Nav = window.Nav || {};
       return {
         state: this.state,
         label,
+        detail: this.detail || '',
+        url: this.url,
+        wsUrl: this.wsUrl(),
+        overridden: Boolean(this.overridden),
+        configured: this.configured || '',
         upstreamOk,
         upstreamState: this.upstream?.state || 'unknown',
         counts: this.counts || null,

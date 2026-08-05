@@ -1,8 +1,9 @@
 /* ==========================================================================
    24Nav app
-   Boots the page, wires the chart to the route model, and owns the caution
-   and warning layer. Live traffic arrives in a later step and feeds
-   Nav.alerts.evaluate() with the same aircraft records the relay broadcasts.
+   Boots the page, wires the chart to the route model, builds the ATC24 command,
+   and owns the caution and warning layer. Live traffic arrives in a later step
+   and feeds Nav.alerts.evaluate() and Nav.instruments.update() with the same
+   aircraft records the relay broadcasts.
    ========================================================================== */
 
 window.Nav = window.Nav || {};
@@ -14,7 +15,7 @@ window.Nav = window.Nav || {};
   const PROFILE_KEY = '24nav.profile';
   const OVERSPEED_KT = 250;
   const OVERSPEED_ALT = 3000;
-  const WARNING_COOLDOWN_MS = 20000;
+  const GAME_KNOT_TO_REAL = 0.592172785;
 
   const dom = {};
 
@@ -33,24 +34,61 @@ window.Nav = window.Nav || {};
       }
     },
 
+    /**
+     * The two clips have shipped under different names depending on whether they
+     * were renamed on upload, and a missing file fails silently inside the play
+     * promise. Try each candidate in turn so the chime does not go quiet just
+     * because a filename differs.
+     */
+    loadOne(candidates, volume) {
+      const audio = new Audio();
+      audio.preload = 'auto';
+      audio.volume = volume;
+      let index = 0;
+      const attach = () => {
+        if (index >= candidates.length) {
+          console.warn('24Nav: no audio file found among', candidates.join(', '));
+          return;
+        }
+        audio.src = candidates[index];
+        index += 1;
+      };
+      audio.addEventListener('error', attach);
+      attach();
+      return audio;
+    },
+
     load() {
-      this.chime = new Audio('assets/audio/cabin-chime.mp3');
-      this.warning = new Audio('assets/audio/master-warning.mp3');
-      this.chime.preload = 'auto';
-      this.warning.preload = 'auto';
-      this.warning.volume = 0.85;
+      this.chime = this.loadOne([
+        'assets/audio/cabin-chime.mp3',
+        'assets/audio/audio_aircraft-cabin-chime.mp3',
+        'assets/audio/aircraft-cabin-chime.mp3',
+      ], 0.9);
+      this.warning = this.loadOne([
+        'assets/audio/master-warning.mp3',
+        'assets/audio/audio_777-master-warning.mp3',
+        'assets/audio/777-master-warning.mp3',
+      ], 0.85);
+    },
+
+    stop(which) {
+      const audio = which === 'warning' ? this.warning : this.chime;
+      if (!audio) return;
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch (error) {
+        // Nothing to stop.
+      }
     },
 
     play(which) {
       if (!this.enabled()) return;
-      if (which === 'chime' && !this.chime) return;
       const audio = which === 'warning' ? this.warning : this.chime;
       if (!audio) return;
       audio.currentTime = 0;
       const attempt = audio.play();
-      if (attempt?.catch) {
-        attempt.catch(() => this.armOnGesture(which));
-      }
+      if (attempt?.catch) attempt.catch(() => this.armOnGesture(which));
     },
 
     /** Browsers block audio until the page has been interacted with. Hold the
@@ -72,46 +110,77 @@ window.Nav = window.Nav || {};
   /* --- caution and warning ---------------------------------------------- */
 
   const alerts = {
-    lastWarningAt: 0,
-    active: null,
+    key: null,
+    text: '',
+    acknowledged: false,
 
-    show(text) {
-      if (this.active === text) return;
-      this.active = text;
-      dom.bannerText.textContent = text;
-      dom.banner.dataset.active = 'true';
-      const now = Date.now();
-      if (now - this.lastWarningAt > WARNING_COOLDOWN_MS) {
-        this.lastWarningAt = now;
-        sound.play('warning');
+    /**
+     * Conditions are held by a stable key rather than by their message text.
+     * The text carries a live airspeed that changes every update, so keying off
+     * it would restart the warning tone several times a second.
+     */
+    set(key, text) {
+      if (this.key === key) {
+        this.text = text;
+        return this.render();
       }
+      this.key = key;
+      this.text = text;
+      this.acknowledged = false;
+      sound.play('warning');
+      this.render();
     },
 
     clear() {
-      if (!this.active) return;
-      this.active = null;
-      dom.banner.dataset.active = 'false';
+      if (!this.key) return;
+      this.key = null;
+      this.text = '';
+      this.acknowledged = false;
+      sound.stop('warning');
+      this.render();
+    },
+
+    /** Pressing the caution button cancels the tone and the flash, exactly like
+        acknowledging a master caution. The lamp stays lit while the condition
+        is still true. */
+    acknowledge() {
+      if (!this.key || this.acknowledged) return;
+      this.acknowledged = true;
+      sound.stop('warning');
+      this.render();
+    },
+
+    render() {
+      if (!dom.caution) return;
+      const state = !this.key ? 'clear' : this.acknowledged ? 'acked' : 'active';
+      dom.caution.dataset.state = state;
+      dom.caution.disabled = !this.key;
+      dom.cautionTitle.textContent = this.key ? 'Overspeed' : 'Caution';
+      dom.cautionDetail.textContent = this.key
+        ? (this.acknowledged ? this.text : `${this.text}  ${'\u2014'}  press to acknowledge`)
+        : 'No active alerts';
     },
 
     /**
-     * Evaluates one live aircraft record from the 24data feed. `speed` is the
-     * airspeed the pilot reads on the flight deck, so the limit is checked
-     * against that rather than the derived real-knot value.
+     * Evaluates one live aircraft record. `speed` is the airspeed the pilot
+     * reads on the flight deck, so the limit is checked against that rather
+     * than the derived real-knot value.
      */
     evaluate(aircraft) {
       if (!aircraft) return this.clear();
       const speed = Number(aircraft.speed);
       const altitude = Number(aircraft.altitude);
-      const onGround = aircraft.isOnGround === true;
-      if (onGround || !Number.isFinite(speed) || !Number.isFinite(altitude)) return this.clear();
+      if (aircraft.isOnGround === true || !Number.isFinite(speed) || !Number.isFinite(altitude)) {
+        return this.clear();
+      }
       if (speed > OVERSPEED_KT && altitude < OVERSPEED_ALT) {
-        return this.show(`Overspeed  ${Math.round(speed)} kt  ${Math.round(altitude)} ft`);
+        return this.set('overspeed', `${Math.round(speed)} kt at ${Math.round(altitude)} ft`);
       }
       return this.clear();
     },
   };
 
-  /* --- readouts --------------------------------------------------------- */
+  /* --- render ------------------------------------------------------------ */
 
   function renderReadouts() {
     const route = window.Nav.route;
@@ -122,13 +191,13 @@ window.Nav = window.Nav || {};
       ? `${route.departure} ${route.routeString()} ${route.arrival}`.replace(/\s+/g, ' ')
       : 'No route';
     dom.readoutDistance.textContent = `${nm.toFixed(1)} NM`;
-    dom.readoutFixes.textContent = String(route.fixes.length);
+    dom.readoutCruise.textContent = `FL${route.flightLevel()}`;
 
-    // Block time on the game's distance scale. An aircraft indicating 380 kt
-    // crosses the ground at 380 * 0.592172785 = 225 kt, so real-world cruise
+    // Block time on the game's distance scale. An aircraft indicating 280 kt
+    // crosses the ground at 280 * 0.592172785 = 166 kt, so real-world cruise
     // figures would understate every leg by a factor of about 1.7.
     if (nm > 0) {
-      const groundKt = 380 * 0.592172785;
+      const groundKt = Math.max(40, route.planSpeedKt * GAME_KNOT_TO_REAL);
       const minutes = Math.round((nm / groundKt) * 60) + 3;
       dom.readoutEte.textContent = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
     } else {
@@ -136,10 +205,219 @@ window.Nav = window.Nav || {};
     }
   }
 
+  function renderCommand() {
+    const route = window.Nav.route;
+    dom.planCommand.textContent = route.command();
+    const missing = route.missingPlanFields();
+    dom.planMissing.textContent = missing.length
+      ? `Still needed: ${missing.join(', ')}. The command works without them but ATC24 may reject it.`
+      : 'Ready to paste into the ATC24 flight plan page.';
+    dom.planMissing.dataset.state = missing.length ? 'warn' : 'ok';
+  }
+
+  function syncControls() {
+    const route = window.Nav.route;
+    dom.departure.value = route.departure;
+    dom.arrival.value = route.arrival;
+    populateRunways('departure', route.departure, route.departureRunway);
+    populateRunways('arrival', route.arrival, route.arrivalRunway);
+    if (document.activeElement !== dom.cruise) dom.cruise.value = String(route.cruiseFl);
+    if (document.activeElement !== dom.climbVs) dom.climbVs.value = String(route.climbVs);
+    if (document.activeElement !== dom.descentVs) dom.descentVs.value = String(route.descentVs);
+    if (document.activeElement !== dom.planSpeed) dom.planSpeed.value = String(route.planSpeedKt);
+
+    for (const [role, button, input, state] of [
+      ['departure', dom.depExtOn, dom.depExtNm, route.depExt],
+      ['arrival', dom.arrExtOn, dom.arrExtNm, route.arrExt],
+    ]) {
+      const available = Boolean(route.extensionGeometry(role));
+      button.setAttribute('aria-pressed', String(state.on && available));
+      button.disabled = !available;
+      input.disabled = !state.on || !available;
+      if (document.activeElement !== input) input.value = state.nm.toFixed(1);
+    }
+
+    for (const [field, node] of [
+      ['ingameCallsign', dom.planIngame],
+      ['filedCallsign', dom.planFiled],
+      ['aircraft', dom.planAircraft],
+      ['robloxName', dom.planRoblox],
+    ]) {
+      if (document.activeElement !== node) node.value = route.plan[field];
+    }
+    if (document.activeElement !== dom.planRules) dom.planRules.value = route.plan.flightRules;
+  }
+
+  function atisCard(role, code) {
+    const report = window.Nav.live.atisFor(code);
+    const card = document.createElement('div');
+    card.className = 'atis';
+    card.dataset.role = role;
+
+    const head = document.createElement('div');
+    head.className = 'atis__head';
+    const title = document.createElement('span');
+    title.className = 'atis__code';
+    title.textContent = code;
+    const letter = document.createElement('span');
+    letter.className = 'atis__letter';
+    letter.textContent = report?.letter ? `INFO ${String(report.letter).toUpperCase()}` : 'NO REPORT';
+    head.appendChild(title);
+    head.appendChild(letter);
+    card.appendChild(head);
+
+    const tag = document.createElement('span');
+    tag.className = 'u-label';
+    tag.textContent = role === 'departure' ? 'Departure' : 'Arrival';
+    card.appendChild(tag);
+
+    if (!report) {
+      const empty = document.createElement('p');
+      empty.className = 'atis__empty';
+      empty.textContent = window.Nav.live.state === 'open'
+        ? 'The relay has not received a report for this airport yet.'
+        : 'Connect the relay on the Live tab to receive ATIS.';
+      card.appendChild(empty);
+      return card;
+    }
+
+    const rows = document.createElement('dl');
+    rows.className = 'atis__rows';
+    const wind = report.wind
+      ? `${report.wind.direction}/${String(report.wind.speed).padStart(2, '0')}${report.wind.gust ? `G${report.wind.gust}` : ''}`
+      : '--';
+    for (const [label, value] of [
+      ['Wind', wind],
+      ['QNH', report.qnh ? `Q${report.qnh}` : '--'],
+      ['Dep rwy', (report.departureRunways || []).join(', ') || '--'],
+      ['Arr rwy', (report.arrivalRunways || []).join(', ') || '--'],
+    ]) {
+      const wrap = document.createElement('div');
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.className = 'u-data';
+      dd.textContent = value;
+      wrap.appendChild(dt);
+      wrap.appendChild(dd);
+      rows.appendChild(wrap);
+    }
+    card.appendChild(rows);
+
+    // Cloud layers are not in the relay's parsed output, so they come from the
+    // report body here and feed straight into the vertical profile.
+    const layers = window.Nav.profile.parseAtisClouds(report.content);
+    const clouds = document.createElement('div');
+    clouds.className = 'atis__clouds';
+    if (!layers.length) {
+      const chip = document.createElement('span');
+      chip.className = 'cloud-chip cloud-chip--clear';
+      chip.textContent = 'No cloud reported';
+      clouds.appendChild(chip);
+    } else {
+      for (const layer of layers) {
+        const chip = document.createElement('span');
+        const solid = layer.cover === 'BKN' || layer.cover === 'OVC' || layer.cover === 'VV';
+        chip.className = `cloud-chip${solid ? ' cloud-chip--solid' : ''}`;
+        chip.textContent = `${layer.cover} ${window.Nav.profile.formatAltitude(layer.baseFt)}`;
+        clouds.appendChild(chip);
+      }
+    }
+    card.appendChild(clouds);
+
+    const details = document.createElement('details');
+    details.className = 'atis__raw';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Full report';
+    const pre = document.createElement('pre');
+    pre.textContent = report.content || '';
+    details.appendChild(summary);
+    details.appendChild(pre);
+    card.appendChild(details);
+    return card;
+  }
+
+  function renderAtis() {
+    const route = window.Nav.route;
+    dom.atisCards.replaceChildren(
+      atisCard('departure', route.departure),
+      atisCard('arrival', route.arrival)
+    );
+  }
+
+  function renderLive() {
+    const live = window.Nav.live;
+    const summary = live.summary();
+
+    dom.linkState.textContent = summary.label;
+    dom.linkState.dataset.state = summary.state;
+
+    const lines = [
+      ['Relay', summary.label],
+      ['Upstream', summary.upstreamOk ? 'Connected' : summary.upstreamState],
+      ['Aircraft seen', summary.counts ? String(summary.counts.aircraftMain ?? 0) : '--'],
+      ['ATIS held', summary.counts ? String(summary.counts.atis ?? 0) : '--'],
+      ['Tracking', live.trackQuery || 'Nothing'],
+      ['Match', summary.hasAircraft ? 'Aircraft found' : summary.tracking ? 'No match yet' : '--'],
+    ];
+    dom.relayStatus.replaceChildren(...lines.map(([label, value]) => {
+      const row = document.createElement('div');
+      row.className = 'status__row';
+      const dt = document.createElement('span');
+      dt.className = 'u-label';
+      dt.textContent = label;
+      const dd = document.createElement('span');
+      dd.className = 'u-data';
+      dd.textContent = value;
+      row.appendChild(dt);
+      row.appendChild(dd);
+      return row;
+    }));
+
+    const plan = live.flightPlan;
+    dom.filedPlan.replaceChildren();
+    if (plan) {
+      const box = document.createElement('div');
+      box.className = 'filed__box';
+      const title = document.createElement('span');
+      title.className = 'u-label';
+      title.textContent = 'Filed plan on the network';
+      const text = document.createElement('code');
+      text.className = 'u-data filed__text';
+      text.textContent = [
+        plan.realCallsign || plan.callsign || '?',
+        `${plan.departure || '?'} to ${plan.arrival || '?'}`,
+        plan.flightLevel ? `FL${plan.flightLevel}` : '',
+        plan.aircraft || '',
+        plan.route && plan.route !== 'N/A' ? plan.route : 'DCT',
+      ].filter(Boolean).join('  \u00B7  ');
+      const load = document.createElement('button');
+      load.type = 'button';
+      load.className = 'tool';
+      load.textContent = 'Load into planner';
+      load.addEventListener('click', () => {
+        const result = window.Nav.live.adoptFlightPlan();
+        dom.atisNote.textContent = '';
+        if (result.unknown.length) {
+          dom.chartHint.innerHTML = `Loaded the filed plan. <b>${result.unknown.join(', ')}</b> ${result.unknown.length === 1 ? 'is not' : 'are not'} in the chart database and ${result.unknown.length === 1 ? 'was' : 'were'} skipped.`;
+        }
+      });
+      box.appendChild(title);
+      box.appendChild(text);
+      box.appendChild(load);
+      dom.filedPlan.appendChild(box);
+    }
+
+    if (document.activeElement !== dom.relayUrl) dom.relayUrl.value = live.url;
+    if (document.activeElement !== dom.trackQuery) dom.trackQuery.value = live.trackQuery;
+  }
+
   function renderAll() {
     const route = window.Nav.route;
+    window.Nav.chart.setRunwayAirports([route.departure, route.arrival]);
     window.Nav.strip.render();
     window.Nav.chart.drawRoute(route.nodes());
+    window.Nav.chart.drawExtensions();
     window.Nav.chart.setSelected(
       route.selection?.type === 'fix' ? route.fixes[route.selection.index]?.name
       : route.selection?.type === 'departure' ? route.departure
@@ -147,10 +425,12 @@ window.Nav = window.Nav || {};
       : null
     );
     window.Nav.profile.render();
+    window.Nav.instruments.render();
+    renderAtis();
+    renderLive();
     renderReadouts();
-    dom.departure.value = route.departure;
-    dom.arrival.value = route.arrival;
-    dom.cruise.value = String(route.cruiseFl);
+    renderCommand();
+    syncControls();
     updateHint();
   }
 
@@ -187,11 +467,141 @@ window.Nav = window.Nav || {};
     }
   }
 
+  function populateRunways(role, code, selected) {
+    const node = role === 'departure' ? dom.departureRunway : dom.arrivalRunway;
+    const list = window.Nav.route.runwaysFor(code);
+    const signature = `${code}:${list.map((r) => r.label).join(',')}`;
+    if (node.dataset.signature !== signature) {
+      node.dataset.signature = signature;
+      node.innerHTML = '';
+      if (!list.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No data';
+        node.appendChild(option);
+      }
+      for (const runway of list) {
+        const option = document.createElement('option');
+        option.value = runway.label;
+        option.textContent = `${runway.label}  ${window.Nav.geo.padHeading(runway.heading)}\u00B0`;
+        node.appendChild(option);
+      }
+    }
+    node.disabled = !list.length;
+    if (selected) node.value = selected;
+  }
+
+  async function copyCommand() {
+    const text = window.Nav.route.command();
+    const done = (ok) => {
+      dom.planCopy.textContent = ok ? 'Copied' : 'Copy failed';
+      window.setTimeout(() => { dom.planCopy.textContent = 'Copy'; }, 1600);
+    };
+    try {
+      await navigator.clipboard.writeText(text);
+      done(true);
+    } catch (error) {
+      // Clipboard access is blocked in some contexts, so fall back to a
+      // throwaway textarea selection.
+      try {
+        const scratch = document.createElement('textarea');
+        scratch.value = text;
+        scratch.setAttribute('readonly', 'readonly');
+        scratch.style.position = 'fixed';
+        scratch.style.opacity = '0';
+        document.body.appendChild(scratch);
+        scratch.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(scratch);
+        done(ok);
+      } catch (fallbackError) {
+        done(false);
+      }
+    }
+  }
+
   function bindControls() {
-    dom.departure.addEventListener('change', () => window.Nav.route.setEndpoint('departure', dom.departure.value));
-    dom.arrival.addEventListener('change', () => window.Nav.route.setEndpoint('arrival', dom.arrival.value));
-    dom.cruise.addEventListener('change', () => window.Nav.route.setCruise(dom.cruise.value));
-    dom.swap.addEventListener('click', () => window.Nav.route.swapEndpoints());
+    const route = window.Nav.route;
+
+    dom.departure.addEventListener('change', () => route.setEndpoint('departure', dom.departure.value));
+    dom.arrival.addEventListener('change', () => route.setEndpoint('arrival', dom.arrival.value));
+    dom.departureRunway.addEventListener('change', () => route.setRunway('departure', dom.departureRunway.value));
+    dom.arrivalRunway.addEventListener('change', () => route.setRunway('arrival', dom.arrivalRunway.value));
+    dom.cruise.addEventListener('change', () => route.setCruise(dom.cruise.value));
+    dom.climbVs.addEventListener('change', () => route.setVerticalSpeed('climb', dom.climbVs.value));
+    dom.descentVs.addEventListener('change', () => route.setVerticalSpeed('descent', dom.descentVs.value));
+    dom.planSpeed.addEventListener('change', () => route.setPlanSpeed(dom.planSpeed.value));
+    dom.swap.addEventListener('click', () => route.swapEndpoints());
+
+    dom.depExtOn.addEventListener('click', () => route.setExtension('departure', { on: !route.depExt.on }));
+    dom.arrExtOn.addEventListener('click', () => route.setExtension('arrival', { on: !route.arrExt.on }));
+    dom.depExtNm.addEventListener('change', () => route.setExtension('departure', { nm: dom.depExtNm.value }));
+    dom.arrExtNm.addEventListener('change', () => route.setExtension('arrival', { nm: dom.arrExtNm.value }));
+
+    for (const [field, node, event] of [
+      ['ingameCallsign', dom.planIngame, 'input'],
+      ['filedCallsign', dom.planFiled, 'input'],
+      ['aircraft', dom.planAircraft, 'input'],
+      ['robloxName', dom.planRoblox, 'input'],
+      ['flightRules', dom.planRules, 'change'],
+    ]) {
+      node.addEventListener(event, () => route.setPlanField(field, node.value));
+    }
+    dom.planCopy.addEventListener('click', copyCommand);
+
+    const tabs = [dom.tabRoute, dom.tabPlan, dom.tabAtis, dom.tabLive];
+    for (const tab of tabs) {
+      tab.addEventListener('click', () => {
+        dom.rail.dataset.tab = tab.dataset.tab;
+        for (const other of tabs) other.setAttribute('aria-selected', String(other === tab));
+      });
+    }
+
+    // --- live relay -------------------------------------------------------
+    const live = window.Nav.live;
+    dom.relayConnect.addEventListener('click', () => {
+      live.setUrl(dom.relayUrl.value);
+      live.reconnect(true);
+    });
+    dom.relayProbe.addEventListener('click', async () => {
+      live.setUrl(dom.relayUrl.value);
+      dom.relayProbe.textContent = 'Testing';
+      const result = await live.probe();
+      dom.relayProbe.textContent = 'Test';
+      dom.atisNote.textContent = '';
+      if (!result) {
+        dom.chartHint.innerHTML = '<b>Relay unreachable.</b> Check the address, and that ALLOWED_ORIGINS on Render includes this site.';
+      }
+    });
+    dom.trackStart.addEventListener('click', () => live.setTrack(dom.trackQuery.value));
+    dom.trackStop.addEventListener('click', () => live.setTrack(''));
+    dom.trackFromPlan.addEventListener('click', () => {
+      const query = route.plan.ingameCallsign || route.plan.robloxName;
+      if (!query) {
+        dom.chartHint.innerHTML = 'Fill in an <b>in-game callsign</b> or Roblox username on the Plan tab first.';
+        return;
+      }
+      dom.trackQuery.value = query;
+      live.setTrack(query);
+    });
+
+    // --- ATIS -------------------------------------------------------------
+    dom.atisRunways.addEventListener('click', () => {
+      const applied = live.adoptAtisRunways();
+      dom.atisNote.textContent = applied.length
+        ? `Runways set from ATIS: ${applied.join(', ')}.`
+        : 'No usable runway in the current reports. The ATIS runway may not exist in the runway database.';
+      dom.atisNote.dataset.state = applied.length ? 'ok' : 'warn';
+    });
+    dom.atisRefresh.addEventListener('click', async () => {
+      await live.bootstrap();
+      renderAtis();
+      dom.atisNote.textContent = 'Reread the relay ATIS cache.';
+      dom.atisNote.dataset.state = 'ok';
+    });
+
+    // --- master caution ---------------------------------------------------
+    dom.caution.addEventListener('click', () => window.Nav.alerts.acknowledge());
 
     const toggle = (button, name) => {
       button.addEventListener('click', () => {
@@ -200,7 +610,8 @@ window.Nav = window.Nav || {};
         window.Nav.chart.setLayer(name, next);
       });
     };
-    toggle(dom.toggleGround, 'airportArt');
+    toggle(dom.toggleGround, 'airportGround');
+    toggle(dom.toggleRunways, 'airportRunway');
     toggle(dom.toggleFixes, 'fixes');
     toggle(dom.toggleSectors, 'sectors');
     toggle(dom.toggleGrid, 'grid');
@@ -213,7 +624,7 @@ window.Nav = window.Nav || {};
     });
 
     dom.resetView.addEventListener('click', () => {
-      const nodes = window.Nav.route.nodes();
+      const nodes = route.nodes();
       window.Nav.chart.fitTo(nodes.length ? nodes : Object.values(window.Nav.chart.airports));
     });
 
@@ -242,10 +653,9 @@ window.Nav = window.Nav || {};
     }
 
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        if (window.Nav.route.selection) window.Nav.route.select(null);
-        if (window.Nav.chart.measureEnabled) dom.toggleMeasure.click();
-      }
+      if (event.key !== 'Escape') return;
+      if (route.selection) route.select(null);
+      if (window.Nav.chart.measureEnabled) dom.toggleMeasure.click();
     });
   }
 
@@ -261,10 +671,20 @@ window.Nav = window.Nav || {};
   async function boot() {
     for (const id of [
       'app', 'boot', 'bootStatus', 'bootEnter', 'rail', 'railToggle',
-      'departure', 'arrival', 'cruise', 'swap', 'toggleGround', 'toggleFixes',
-      'toggleSectors', 'toggleGrid', 'toggleMeasure', 'resetView',
-      'chartHint', 'readoutRoute', 'readoutDistance', 'readoutEte', 'readoutFixes',
-      'banner', 'bannerText', 'profileCollapse', 'profilePlot',
+      'tabRoute', 'tabPlan',
+      'departure', 'arrival', 'departureRunway', 'arrivalRunway', 'swap',
+      'cruise', 'climbVs', 'descentVs', 'planSpeed',
+      'depExtOn', 'depExtNm', 'arrExtOn', 'arrExtNm',
+      'planIngame', 'planFiled', 'planAircraft', 'planRules', 'planRoblox',
+      'planCommand', 'planCopy', 'planMissing',
+      'toggleGround', 'toggleRunways', 'toggleFixes', 'toggleSectors',
+      'toggleGrid', 'toggleMeasure', 'resetView',
+      'chartHint', 'readoutRoute', 'readoutDistance', 'readoutEte', 'readoutCruise',
+      'profileCollapse', 'profilePlot',
+      'tabAtis', 'tabLive', 'atisCards', 'atisNote', 'atisRunways', 'atisRefresh',
+      'relayUrl', 'relayConnect', 'relayProbe', 'relayStatus', 'filedPlan',
+      'trackQuery', 'trackStart', 'trackStop', 'trackFromPlan',
+      'caution', 'cautionTitle', 'cautionDetail', 'linkState',
     ]) {
       dom[id] = document.getElementById(id);
     }
@@ -293,8 +713,22 @@ window.Nav = window.Nav || {};
     dom.bootStatus.textContent = 'Reading airspace boundaries';
     window.Nav.chart.onPick((point) => window.Nav.route.addPoint(point));
     window.Nav.route.onChange(renderAll);
+    window.Nav.instruments.init();
     bindControls();
     pass('airspace');
+    await wait(110);
+
+    dom.bootStatus.textContent = 'Arming relay link';
+    window.Nav.live.load();
+    // Relay traffic is far more frequent than route edits, so it repaints only
+    // the panels that depend on it rather than the whole planner.
+    window.Nav.live.onChange(() => {
+      renderLive();
+      renderAtis();
+      window.Nav.instruments.render();
+    });
+    window.Nav.live.connect();
+    pass('relay');
     await wait(110);
 
     try {
@@ -308,6 +742,7 @@ window.Nav = window.Nav || {};
     }
 
     window.Nav.profile.init();
+    alerts.render();
     renderAll();
     window.Nav.chart.fitTo(window.Nav.route.nodes());
     dom.bootStatus.textContent = 'Building vertical profile';

@@ -1,8 +1,9 @@
 /* ==========================================================================
    24Nav chart
    Renders the enroute chart in the shared -600..600 map-unit space used across
-   the 24RC vector charts. 1 map unit = 100 studs. Symbols are drawn at a fixed
-   on-screen size by counter-scaling against the current viewBox.
+   the 24RC vector charts. 1 map unit = 100 studs. Symbols and labels are drawn
+   at a fixed on-screen size by counter-scaling against the current viewBox, so
+   nothing balloons or shrinks as the chart is zoomed.
    ========================================================================== */
 
 window.Nav = window.Nav || {};
@@ -16,8 +17,10 @@ window.Nav = window.Nav || {};
   const STUDS_PER_MAP_UNIT = 100;
   const STUDS_PER_NM = 3307.14286;
   const MAP_UNITS_PER_NM = STUDS_PER_NM / STUDS_PER_MAP_UNIT;
-  const MIN_VIEW = 40;
+  const MIN_VIEW = 12;
   const MAX_VIEW = MAP_SPAN * 1.4;
+  const CLICK_SLOP_PX = 6;
+  const MAX_EXTENSION_NM = 20;
 
   /* --- geometry ---------------------------------------------------------- */
 
@@ -53,7 +56,7 @@ window.Nav = window.Nav || {};
     },
   };
 
-  /* --- element helper ---------------------------------------------------- */
+  /* --- element helpers --------------------------------------------------- */
 
   function el(name, attrs = {}, text) {
     const node = document.createElementNS(SVG_NS, name);
@@ -66,7 +69,7 @@ window.Nav = window.Nav || {};
   }
 
   function clear(node) {
-    while (node.firstChild) node.removeChild(node.firstChild);
+    while (node && node.firstChild) node.removeChild(node.firstChild);
   }
 
   /* --- chart ------------------------------------------------------------- */
@@ -78,6 +81,7 @@ window.Nav = window.Nav || {};
     airports: {},
     fixes: {},
     sectors: [],
+    airportAssets: {},
     symbols: [],
     selectedName: null,
     measureEnabled: false,
@@ -85,6 +89,7 @@ window.Nav = window.Nav || {};
     pickHandlers: [],
     measureHandlers: [],
     layers: {},
+    runwayAirports: [],
 
     init(data) {
       this.svg = document.getElementById('chartSvg');
@@ -92,12 +97,14 @@ window.Nav = window.Nav || {};
 
       this.layers = {
         base: document.getElementById('layerBase'),
-        airportArt: document.getElementById('layerAirportArt'),
+        airportGround: document.getElementById('layerAirportGround'),
+        airportRunway: document.getElementById('layerAirportRunway'),
         grid: document.getElementById('layerGrid'),
         sectors: document.getElementById('layerSectors'),
         fixes: document.getElementById('layerFixes'),
         airports: document.getElementById('layerAirports'),
         route: document.getElementById('layerRoute'),
+        extensions: document.getElementById('layerExtensions'),
         measure: document.getElementById('layerMeasure'),
         traffic: document.getElementById('layerTraffic'),
       };
@@ -110,8 +117,9 @@ window.Nav = window.Nav || {};
       }
       this.points = { ...this.fixes, ...this.airports };
       this.sectors = Array.isArray(data.AIRSPACE_SECTORS) ? data.AIRSPACE_SECTORS : [];
+      this.airportAssets = data.AIRPORT_SVG_ASSETS || {};
 
-      this.drawAirportArt(data.AIRPORT_SVG_ASSETS);
+      this.drawAirportGround();
       this.drawGrid();
       this.drawSectors();
       this.drawFixes();
@@ -136,6 +144,9 @@ window.Nav = window.Nav || {};
         entry.node.setAttribute('transform', `translate(${entry.x} ${entry.y}) scale(${k})`);
       }
       this.drawMeasure();
+      this.drawRoute(window.Nav.route ? window.Nav.route.nodes() : []);
+      this.drawExtensions();
+      if (window.Nav.instruments) this.drawOwnship(window.Nav.instruments.state);
     },
 
     setView(next) {
@@ -163,7 +174,7 @@ window.Nav = window.Nav || {};
       const maxX = Math.max(...xs);
       const minY = Math.min(...ys);
       const maxY = Math.max(...ys);
-      const pad = Math.max(60, Math.max(maxX - minX, maxY - minY) * 0.22);
+      const pad = Math.max(40, Math.max(maxX - minX, maxY - minY) * 0.22);
       const ratio = this.aspect();
       const width = Math.max(maxX - minX + pad * 2, (maxY - minY + pad * 2) * ratio);
       const cx = (minX + maxX) / 2;
@@ -178,22 +189,22 @@ window.Nav = window.Nav || {};
       return { x: this.view.x + fx * this.view.w, y: this.view.y + fy * this.view.h };
     },
 
-    /* --- static layers -------------------------------------------------- */
+    /* --- airport artwork ------------------------------------------------ */
 
     /**
-     * Airport ground and runway artwork. Every one of these files is authored in
-     * the same -600..600 world viewBox as the coast layer, so each is a
-     * full-extent overlay that needs no positioning.
+     * Ground and apron artwork for every airport. Each of these files is
+     * authored in the same -600..600 world viewBox as the coast layer, so every
+     * one is a full-extent overlay needing no positioning.
      */
-    drawAirportArt(assets) {
-      const layer = this.layers.airportArt;
-      if (!layer || !assets) return;
+    drawAirportGround() {
+      const layer = this.layers.airportGround;
+      if (!layer) return;
       clear(layer);
-      for (const [airport, files] of Object.entries(assets)) {
+      for (const [airport, files] of Object.entries(this.airportAssets)) {
         for (const file of files) {
-          const runway = String(file).startsWith('RWY');
+          if (String(file).startsWith('RWY')) continue;
           layer.appendChild(el('image', {
-            class: runway ? 'airport-runway' : 'airport-ground',
+            class: 'airport-ground',
             href: `maps/${airport}/${file}`,
             x: -MAP_HALF, y: -MAP_HALF, width: MAP_SPAN, height: MAP_SPAN,
             preserveAspectRatio: 'none',
@@ -202,16 +213,38 @@ window.Nav = window.Nav || {};
       }
     },
 
+    /**
+     * Runway markings only for the airports being used. Drawing all 44 at once
+     * buries the chart in lines belonging to airports the pilot is not visiting.
+     */
+    setRunwayAirports(codes) {
+      const wanted = [...new Set((codes || []).filter(Boolean))];
+      if (wanted.join('|') === this.runwayAirports.join('|')) return;
+      this.runwayAirports = wanted;
+      const layer = this.layers.airportRunway;
+      if (!layer) return;
+      clear(layer);
+      for (const airport of wanted) {
+        for (const file of this.airportAssets[airport] || []) {
+          if (!String(file).startsWith('RWY')) continue;
+          layer.appendChild(el('image', {
+            class: 'airport-runway',
+            href: `maps/${airport}/${file}`,
+            x: -MAP_HALF, y: -MAP_HALF, width: MAP_SPAN, height: MAP_SPAN,
+            preserveAspectRatio: 'none',
+          }));
+        }
+      }
+    },
+
+    /* --- static layers -------------------------------------------------- */
+
     drawGrid() {
       const layer = this.layers.grid;
       clear(layer);
-      const step = 50 * MAP_UNITS_PER_NM;
+      const step = 5 * MAP_UNITS_PER_NM;
       for (let r = step; r <= MAP_HALF * 1.5; r += step) {
         layer.appendChild(el('circle', { class: 'grid-line', cx: 0, cy: 0, r }));
-      }
-      for (let v = -MAP_HALF; v <= MAP_HALF; v += 100) {
-        layer.appendChild(el('line', { class: 'grid-line', x1: v, y1: -MAP_HALF, x2: v, y2: MAP_HALF }));
-        layer.appendChild(el('line', { class: 'grid-line', x1: -MAP_HALF, y1: v, x2: MAP_HALF, y2: v }));
       }
     },
 
@@ -227,10 +260,15 @@ window.Nav = window.Nav || {};
         }));
         const cx = polygon.reduce((sum, p) => sum + p[0], 0) / polygon.length;
         const cy = polygon.reduce((sum, p) => sum + p[1], 0) / polygon.length;
-        const label = sector.frequency
-          ? `${String(sector.label).toUpperCase()}  ${sector.frequency}`
-          : String(sector.label).toUpperCase();
-        layer.appendChild(el('text', { class: 'sector-tag', x: cx, y: cy }, label));
+        // Counter-scaled, otherwise the frequency label grows into the airport
+        // artwork as soon as the chart is zoomed in.
+        const group = el('g', { class: 'sector-label' });
+        group.appendChild(el('text', { class: 'sector-tag', y: 0 }, String(sector.label).toUpperCase()));
+        if (sector.frequency) {
+          group.appendChild(el('text', { class: 'sector-tag sector-tag--freq', y: 9 }, sector.frequency));
+        }
+        layer.appendChild(group);
+        this.symbols.push({ node: group, x: cx, y: cy });
       }
     },
 
@@ -239,6 +277,9 @@ window.Nav = window.Nav || {};
       clear(layer);
       for (const fix of Object.values(this.fixes)) {
         const group = el('g', { class: 'pick', 'data-name': fix.name, 'data-kind': 'fix', tabindex: '0', role: 'button' });
+        // Invisible hit target. Without it only the 1.25px stroke is clickable,
+        // which makes adding a waypoint a test of marksmanship.
+        group.appendChild(el('circle', { class: 'pick-hit', cx: 0, cy: 0, r: 9 }));
         group.appendChild(el('polygon', { class: 'fix-symbol', points: '0,-4 4,0 0,4 -4,0' }));
         group.appendChild(el('text', { class: 'fix-name', x: 0, y: -7 }, fix.name));
         group.appendChild(el('title', {}, `${fix.name} (fix)`));
@@ -252,8 +293,9 @@ window.Nav = window.Nav || {};
       clear(layer);
       for (const airport of Object.values(this.airports)) {
         const group = el('g', { class: 'pick', 'data-name': airport.name, 'data-kind': 'airport', tabindex: '0', role: 'button' });
+        group.appendChild(el('circle', { class: 'pick-hit', cx: 0, cy: 0, r: 11 }));
         group.appendChild(el('circle', { class: 'apt-symbol', cx: 0, cy: 0, r: 4.5 }));
-        group.appendChild(el('circle', { class: 'apt-symbol', cx: 0, cy: 0, r: 1.4 }));
+        group.appendChild(el('circle', { class: 'apt-symbol apt-symbol--core', cx: 0, cy: 0, r: 1.4 }));
         group.appendChild(el('text', { class: 'apt-name', x: 0, y: 14 }, airport.name));
         group.appendChild(el('title', {}, `${airport.name} (airport)`));
         layer.appendChild(group);
@@ -272,14 +314,15 @@ window.Nav = window.Nav || {};
     setSelected(name) {
       this.selectedName = name || null;
       for (const entry of this.symbols) {
-        const match = entry.node.dataset.name === this.selectedName;
+        const match = entry.node.dataset?.name === this.selectedName;
         if (match) entry.node.dataset.selected = 'true';
-        else delete entry.node.dataset.selected;
+        else if (entry.node.dataset) delete entry.node.dataset.selected;
       }
     },
 
     drawRoute(nodes) {
       const layer = this.layers.route;
+      if (!layer) return;
       clear(layer);
       const list = (nodes || []).filter((n) => Number.isFinite(n?.x));
       if (list.length < 1) return;
@@ -307,12 +350,96 @@ window.Nav = window.Nav || {};
 
       for (const node of list) {
         const group = el('g', { transform: `translate(${node.x} ${node.y}) scale(${k})` });
-        const shape = node.kind === 'airport'
-          ? el('circle', { class: 'route-node', cx: 0, cy: 0, r: 6.5 })
-          : el('rect', { class: 'route-node', x: -5, y: -5, width: 10, height: 10, transform: 'rotate(45)' });
-        group.appendChild(shape);
+        if (node.kind === 'airport') {
+          // A thin open ring, so the airport symbol and its ground artwork stay
+          // readable underneath instead of being covered by a filled disc.
+          group.appendChild(el('circle', { class: 'route-ring', cx: 0, cy: 0, r: 8 }));
+        } else if (node.kind === 'extension') {
+          group.appendChild(el('rect', { class: 'route-node route-node--ext', x: -3.5, y: -3.5, width: 7, height: 7, transform: 'rotate(45)' }));
+        } else {
+          group.appendChild(el('rect', { class: 'route-node', x: -4, y: -4, width: 8, height: 8, transform: 'rotate(45)' }));
+        }
         layer.appendChild(group);
       }
+    },
+
+    /* --- runway extensions ---------------------------------------------- */
+
+    drawExtensions() {
+      const layer = this.layers.extensions;
+      if (!layer || !window.Nav.route) return;
+      clear(layer);
+      const k = this.scale;
+
+      for (const role of ['departure', 'arrival']) {
+        const geometry = window.Nav.route.extensionGeometry(role);
+        if (!geometry) continue;
+        const state = role === 'departure' ? window.Nav.route.depExt : window.Nav.route.arrExt;
+        const nm = state.on ? state.nm : 0;
+        const units = Math.max(0, nm) * MAP_UNITS_PER_NM;
+        const tip = {
+          x: geometry.origin.x + geometry.direction.x * units,
+          y: geometry.origin.y + geometry.direction.y * units,
+        };
+        // Showing the whole 20 NM range at all times drags a long dotted line
+        // across the chart, so the guide reaches a little past the handle and no
+        // further. The drag itself is still allowed out to the full range.
+        const guideNm = Math.min(MAX_EXTENSION_NM, Math.max(nm + 3, 6));
+        const full = {
+          x: geometry.origin.x + geometry.direction.x * guideNm * MAP_UNITS_PER_NM,
+          y: geometry.origin.y + geometry.direction.y * guideNm * MAP_UNITS_PER_NM,
+        };
+
+        layer.appendChild(el('line', {
+          class: 'ext-track', x1: geometry.origin.x, y1: geometry.origin.y, x2: full.x, y2: full.y,
+        }));
+        if (state.on) {
+          layer.appendChild(el('line', {
+            class: 'ext-live', x1: geometry.origin.x, y1: geometry.origin.y, x2: tip.x, y2: tip.y,
+          }));
+        }
+
+        const handle = el('g', {
+          class: 'ext-handle',
+          'data-ext': role,
+          'data-on': String(state.on),
+          transform: `translate(${tip.x} ${tip.y}) scale(${k})`,
+          tabindex: '0',
+          role: 'button',
+        });
+        handle.appendChild(el('circle', { class: 'pick-hit', cx: 0, cy: 0, r: 12 }));
+        handle.appendChild(el('rect', { class: 'ext-diamond', x: -5, y: -5, width: 10, height: 10, transform: 'rotate(45)' }));
+        handle.appendChild(el('text', { class: 'ext-label', y: -11 },
+          state.on ? `${geometry.runway} ${nm.toFixed(1)} NM` : `${geometry.runway} off`));
+        handle.appendChild(el('title', {}, `Drag to set the ${role} runway extension`));
+        layer.appendChild(handle);
+      }
+    },
+
+    /* --- ownship -------------------------------------------------------- */
+
+    drawOwnship(state) {
+      const layer = this.layers.traffic;
+      if (!layer) return;
+      clear(layer);
+      if (!state?.present) return;
+      const k = this.scale;
+      const group = el('g', {
+        class: 'ownship',
+        'data-ownship': 'true',
+        'data-source': state.source,
+        transform: `translate(${state.x} ${state.y}) scale(${k})`,
+        tabindex: '0',
+        role: 'button',
+      });
+      group.appendChild(el('circle', { class: 'pick-hit', cx: 0, cy: 0, r: 14 }));
+      const body = el('g', { transform: `rotate(${Number(state.heading) || 0})` });
+      body.appendChild(el('polygon', { class: 'ownship-symbol', points: '0,-9 6,7 0,4 -6,7' }));
+      group.appendChild(body);
+      group.appendChild(el('text', { class: 'ownship-label', y: -13 },
+        `${state.callsign || 'OWN'}  ${Math.round(state.altitude)}`));
+      group.appendChild(el('title', {}, 'Drag to move the aircraft'));
+      layer.appendChild(group);
     },
 
     /* --- measure -------------------------------------------------------- */
@@ -341,8 +468,7 @@ window.Nav = window.Nav || {};
       if (angle > 90 || angle < -90) angle += 180;
 
       layer.appendChild(el('line', {
-        class: 'measure-line',
-        x1: m.start.x, y1: m.start.y, x2: m.end.x, y2: m.end.y,
+        class: 'measure-line', x1: m.start.x, y1: m.start.y, x2: m.end.x, y2: m.end.y,
       }));
       for (const point of [m.start, m.end]) {
         const g = el('g', { transform: `translate(${point.x} ${point.y}) scale(${k})` });
@@ -372,7 +498,8 @@ window.Nav = window.Nav || {};
       const pointers = new Map();
       let panFrom = null;
       let pinch = null;
-      let moved = 0;
+      let drag = null;
+      let downAt = null;
 
       svg.addEventListener('wheel', (event) => {
         event.preventDefault();
@@ -390,12 +517,25 @@ window.Nav = window.Nav || {};
       svg.addEventListener('pointerdown', (event) => {
         svg.setPointerCapture(event.pointerId);
         pointers.set(event.pointerId, event);
-        moved = 0;
+        downAt = { x: event.clientX, y: event.clientY };
 
         if (pointers.size === 2) {
           const [a, b] = [...pointers.values()];
           pinch = { distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), w: this.view.w };
           panFrom = null;
+          return;
+        }
+
+        // Dragging a runway extension handle or the aircraft takes priority over
+        // panning, so grabbing either does not slide the whole chart.
+        const extHandle = event.target.closest?.('[data-ext]');
+        if (extHandle && !this.measureEnabled) {
+          drag = { kind: 'ext', role: extHandle.dataset.ext };
+          return;
+        }
+        const own = event.target.closest?.('[data-ownship]');
+        if (own && !this.measureEnabled) {
+          drag = { kind: 'ownship' };
           return;
         }
 
@@ -410,7 +550,6 @@ window.Nav = window.Nav || {};
       svg.addEventListener('pointermove', (event) => {
         if (!pointers.has(event.pointerId)) return;
         pointers.set(event.pointerId, event);
-        moved += 1;
 
         if (pinch && pointers.size === 2) {
           const [a, b] = [...pointers.values()];
@@ -425,6 +564,23 @@ window.Nav = window.Nav || {};
           return;
         }
 
+        if (drag?.kind === 'ext') {
+          const geometry = window.Nav.route.extensionGeometry(drag.role);
+          if (!geometry) return;
+          const at = this.clientToMap(event);
+          const projected = (at.x - geometry.origin.x) * geometry.direction.x
+            + (at.y - geometry.origin.y) * geometry.direction.y;
+          const nm = Math.max(0, Math.min(MAX_EXTENSION_NM, projected / MAP_UNITS_PER_NM));
+          window.Nav.route.setExtensionFromDrag(drag.role, nm, false);
+          return;
+        }
+
+        if (drag?.kind === 'ownship') {
+          const at = this.clientToMap(event);
+          window.Nav.instruments.setSimulated({ x: at.x, y: at.y });
+          return;
+        }
+
         if (this.measure?.live) {
           this.measure.end = this.clientToMap(event);
           this.drawMeasure();
@@ -435,24 +591,25 @@ window.Nav = window.Nav || {};
         const box = svg.getBoundingClientRect();
         const dx = (event.clientX - box.left) / box.width * panFrom.view.w;
         const dy = (event.clientY - box.top) / box.height * panFrom.view.h;
-        this.setView({
-          x: panFrom.map.x - dx,
-          y: panFrom.map.y - dy,
-          w: panFrom.view.w,
-        });
+        this.setView({ x: panFrom.map.x - dx, y: panFrom.map.y - dy, w: panFrom.view.w });
       });
 
       const release = (event) => {
         pointers.delete(event.pointerId);
         if (pointers.size < 2) pinch = null;
-        if (pointers.size === 0) {
-          panFrom = null;
-          delete svg.dataset.panning;
-          if (this.measure?.live) {
-            this.measure.live = false;
-            if (!this.measure.end) this.measure = null;
-            this.drawMeasure();
-          }
+        if (pointers.size > 0) return;
+
+        if (drag?.kind === 'ext') {
+          const state = drag.role === 'departure' ? window.Nav.route.depExt : window.Nav.route.arrExt;
+          window.Nav.route.setExtensionFromDrag(drag.role, state.nm, true);
+        }
+        drag = null;
+        panFrom = null;
+        delete svg.dataset.panning;
+        if (this.measure?.live) {
+          this.measure.live = false;
+          if (!this.measure.end) this.measure = null;
+          this.drawMeasure();
         }
       };
       svg.addEventListener('pointerup', release);
@@ -460,7 +617,10 @@ window.Nav = window.Nav || {};
 
       const pick = (event) => {
         if (this.measureEnabled) return;
-        if (moved > 3) return;
+        // Measured in pixels rather than counting move events, because a plain
+        // click can still emit several of them.
+        if (downAt && Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) > CLICK_SLOP_PX) return;
+        if (event.target.closest?.('[data-ext],[data-ownship]')) return;
         const group = event.target.closest?.('.pick');
         if (!group) return;
         const point = this.points[group.dataset.name];
@@ -477,12 +637,12 @@ window.Nav = window.Nav || {};
         if (point) for (const handler of this.pickHandlers) handler(point, event);
       });
 
-      // Right-clicking a chart should not open a browser context menu.
+      // Right-clicking a chart should not open a browser menu.
       svg.addEventListener('contextmenu', (event) => event.preventDefault());
 
       // Keep the viewBox aspect locked to the container. Without this the square
       // viewBox letterboxes inside a wide panel and the chart floats in dead
-      // space, and the initial measurement happens before layout has settled.
+      // space, and the first measurement happens before layout has settled.
       const resync = () => this.setView({ ...this.view });
       if (typeof ResizeObserver === 'function') {
         new ResizeObserver(resync).observe(svg.parentElement || svg);

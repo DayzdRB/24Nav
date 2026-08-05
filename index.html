@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>24Nav route planner</title>
-<meta name="description" content="Route planning, live traffic and vertical navigation for the ATC24 network.">
+<meta name="description" content="Route planning, live tracking and vertical navigation for the ATC24 network.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira:wght@500;600;800&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -21,6 +21,7 @@
     <li class="boot__test" data-test="chart" data-state="wait"><span>Chart database</span><span class="boot__result">Loaded</span></li>
     <li class="boot__test" data-test="fixes" data-state="wait"><span>Navigation fixes</span><span class="boot__result">Loaded</span></li>
     <li class="boot__test" data-test="airspace" data-state="wait"><span>Airspace boundaries</span><span class="boot__result">Loaded</span></li>
+    <li class="boot__test" data-test="relay" data-state="wait"><span>Relay link</span><span class="boot__result">Armed</span></li>
     <li class="boot__test" data-test="profile" data-state="wait"><span>Vertical profile</span><span class="boot__result">Ready</span></li>
   </ul>
   <p class="boot__status" id="bootStatus">Running self test</p>
@@ -30,8 +31,16 @@
 <div class="app" id="app" data-profile="open">
 
   <header class="app__header">
-    <button class="tool rail__toggle" id="railToggle" type="button" aria-expanded="false">Route</button>
+    <button class="tool rail__toggle" id="railToggle" type="button" aria-expanded="false">Panel</button>
     <div class="brand">24<span>NAV</span></div>
+
+    <button class="caution" id="caution" type="button" data-state="clear" aria-live="polite">
+      <span class="caution__lamp"></span>
+      <span class="caution__body">
+        <span class="caution__title" id="cautionTitle">Caution</span>
+        <span class="caution__detail u-data" id="cautionDetail">No active alerts</span>
+      </span>
+    </button>
 
     <div class="readouts">
       <div class="readout readout--data">
@@ -47,38 +56,177 @@
         <span class="readout__value" id="readoutEte">--:--</span>
       </div>
       <div class="readout">
-        <span class="u-label">Fixes</span>
-        <span class="readout__value" id="readoutFixes">0</span>
+        <span class="u-label">Cruise</span>
+        <span class="readout__value" id="readoutCruise">FL100</span>
+      </div>
+      <div class="readout readout--link">
+        <span class="u-label">Relay</span>
+        <span class="readout__value link" id="linkState" data-state="idle">Idle</span>
       </div>
     </div>
   </header>
 
   <div class="app__body">
 
-    <aside class="rail" id="rail" data-open="false">
-      <div class="rail__head">
-        <div class="endpoints">
-          <label class="field">
-            <span class="u-label">Departure</span>
-            <select id="departure"></select>
-          </label>
-          <button class="swap" id="swap" type="button" title="Swap departure and arrival" aria-label="Swap departure and arrival">&#8646;</button>
-          <label class="field">
-            <span class="u-label">Arrival</span>
-            <select id="arrival"></select>
-          </label>
-        </div>
-        <label class="field">
-          <span class="u-label">Cruise flight level</span>
-          <input id="cruise" type="number" min="10" max="450" step="10" value="100" inputmode="numeric">
-        </label>
+    <aside class="rail" id="rail" data-open="false" data-tab="route">
+      <div class="rail__tabs" role="tablist">
+        <button class="rail__tab" id="tabRoute" type="button" role="tab" aria-selected="true" data-tab="route">Route</button>
+        <button class="rail__tab" id="tabPlan" type="button" role="tab" aria-selected="false" data-tab="plan">Plan</button>
+        <button class="rail__tab" id="tabAtis" type="button" role="tab" aria-selected="false" data-tab="atis">ATIS</button>
+        <button class="rail__tab" id="tabLive" type="button" role="tab" aria-selected="false" data-tab="live">Live</button>
       </div>
 
-      <div class="rail__body">
-        <ol class="strip" id="strip"></ol>
-        <div class="empty" id="stripEmpty">
-          <strong>Route is direct</strong>
-          Click any cyan fix on the chart to add it. Select a fix in this list first and the next one you click is inserted after it.
+      <!-- Route -->
+      <div class="rail__panel" data-panel="route">
+        <div class="rail__head">
+          <div class="endpoints">
+            <label class="field">
+              <span class="u-label">Departure</span>
+              <select id="departure"></select>
+            </label>
+            <button class="swap" id="swap" type="button" title="Swap departure and arrival" aria-label="Swap departure and arrival">&#8646;</button>
+            <label class="field">
+              <span class="u-label">Arrival</span>
+              <select id="arrival"></select>
+            </label>
+          </div>
+
+          <div class="grid-2">
+            <label class="field">
+              <span class="u-label">Dep runway</span>
+              <select id="departureRunway"></select>
+            </label>
+            <label class="field">
+              <span class="u-label">Arr runway</span>
+              <select id="arrivalRunway"></select>
+            </label>
+          </div>
+
+          <div class="grid-3">
+            <label class="field">
+              <span class="u-label">Cruise FL</span>
+              <input id="cruise" type="number" min="10" max="450" step="10" value="100" inputmode="numeric">
+            </label>
+            <label class="field">
+              <span class="u-label">Climb fpm</span>
+              <input id="climbVs" type="number" min="300" max="6000" step="100" value="2500" inputmode="numeric">
+            </label>
+            <label class="field">
+              <span class="u-label">Descent fpm</span>
+              <input id="descentVs" type="number" min="300" max="6000" step="100" value="2000" inputmode="numeric">
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="u-label">Planning speed, indicated kt</span>
+            <input id="planSpeed" type="number" min="80" max="600" step="5" value="280" inputmode="numeric">
+          </label>
+
+          <fieldset class="ext">
+            <legend class="u-label">Runway extensions</legend>
+            <div class="ext__row">
+              <button class="tool" id="depExtOn" type="button" aria-pressed="false">Departure</button>
+              <input class="ext__nm u-data" id="depExtNm" type="number" min="0" max="20" step="0.1" value="1.0" aria-label="Departure extension distance in nautical miles">
+              <span class="u-label">NM</span>
+            </div>
+            <div class="ext__row">
+              <button class="tool" id="arrExtOn" type="button" aria-pressed="false">Arrival</button>
+              <input class="ext__nm u-data" id="arrExtNm" type="number" min="0" max="20" step="0.1" value="2.0" aria-label="Arrival extension distance in nautical miles">
+              <span class="u-label">NM</span>
+            </div>
+            <p class="ext__hint">Turn one on, then drag its diamond along the runway centreline on the chart. Drag it back onto the threshold to switch it off.</p>
+          </fieldset>
+        </div>
+
+        <div class="rail__body">
+          <ol class="strip" id="strip"></ol>
+          <div class="empty" id="stripEmpty">
+            <strong>Route is direct</strong>
+            Click any cyan fix on the chart to add it. Select a fix in this list first and the next one you click is inserted after it. Altitudes come from your climb and descent rates.
+          </div>
+        </div>
+      </div>
+
+      <!-- Flight plan -->
+      <div class="rail__panel" data-panel="plan">
+        <div class="rail__body rail__body--stack">
+          <label class="field">
+            <span class="u-label">In-game callsign</span>
+            <input id="planIngame" type="text" autocomplete="off" spellcheck="false" placeholder="Shamrock-1337">
+            <span class="field__note">The aircraft's actual callsign in ATC24. This is the one that joins to the live position feed.</span>
+          </label>
+          <label class="field">
+            <span class="u-label">Filed callsign</span>
+            <input id="planFiled" type="text" autocomplete="off" spellcheck="false" placeholder="Leave blank to reuse the in-game callsign">
+          </label>
+          <div class="grid-2">
+            <label class="field">
+              <span class="u-label">Aircraft</span>
+              <input id="planAircraft" type="text" autocomplete="off" spellcheck="false" placeholder="A330">
+            </label>
+            <label class="field">
+              <span class="u-label">Rules</span>
+              <select id="planRules">
+                <option value="IFR">IFR</option>
+                <option value="VFR">VFR</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span class="u-label">Roblox username</span>
+            <input id="planRoblox" type="text" autocomplete="off" spellcheck="false" placeholder="PTC_Helper">
+          </label>
+
+          <div class="command">
+            <div class="command__head">
+              <span class="u-label">ATC24 command</span>
+              <button class="tool tool--copy" id="planCopy" type="button">Copy</button>
+            </div>
+            <code class="command__text u-data" id="planCommand">/createflightplan</code>
+            <p class="command__note" id="planMissing"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ATIS -->
+      <div class="rail__panel" data-panel="atis">
+        <div class="rail__body rail__body--stack">
+          <div class="atis-actions">
+            <button class="tool" id="atisRunways" type="button">Use ATIS runways</button>
+            <button class="tool" id="atisRefresh" type="button">Refresh</button>
+          </div>
+          <p class="command__note" id="atisNote"></p>
+          <div id="atisCards"></div>
+        </div>
+      </div>
+
+      <!-- Live -->
+      <div class="rail__panel" data-panel="live">
+        <div class="rail__body rail__body--stack">
+          <label class="field">
+            <span class="u-label">Relay address</span>
+            <input id="relayUrl" type="text" autocomplete="off" spellcheck="false" placeholder="your-relay.onrender.com">
+            <span class="field__note">Your Universal Relay host. Paste the Render URL; the scheme and /v1/live path are added automatically.</span>
+          </label>
+          <div class="row-actions">
+            <button class="tool" id="relayConnect" type="button">Connect</button>
+            <button class="tool" id="relayProbe" type="button">Test</button>
+          </div>
+
+          <label class="field">
+            <span class="u-label">Track aircraft</span>
+            <input id="trackQuery" type="text" autocomplete="off" spellcheck="false" placeholder="Roblox username or in-game callsign">
+            <span class="field__note">The relay matches on either. Tracking drives both guidance instruments and the overspeed caution.</span>
+          </label>
+          <div class="row-actions">
+            <button class="tool" id="trackStart" type="button">Track</button>
+            <button class="tool" id="trackFromPlan" type="button">Use my callsign</button>
+            <button class="tool" id="trackStop" type="button">Stop</button>
+          </div>
+
+          <div class="status" id="relayStatus"></div>
+
+          <div class="filed" id="filedPlan"></div>
         </div>
       </div>
     </aside>
@@ -89,18 +237,21 @@
           <image class="chart-base" href="maps/coast.svg" x="-600" y="-600" width="1200" height="1200" preserveAspectRatio="none"></image>
           <image class="chart-base chart-base--boundaries" href="maps/boundaries.svg" x="-600" y="-600" width="1200" height="1200" preserveAspectRatio="none"></image>
         </g>
-        <g id="layerAirportArt"></g>
+        <g id="layerAirportGround"></g>
+        <g id="layerAirportRunway"></g>
         <g id="layerGrid"></g>
         <g id="layerSectors"></g>
         <g id="layerFixes"></g>
         <g id="layerAirports"></g>
         <g id="layerRoute"></g>
+        <g id="layerExtensions"></g>
         <g id="layerMeasure"></g>
         <g id="layerTraffic"></g>
       </svg>
 
       <div class="chart__toolbar">
         <button class="tool" id="toggleGround" type="button" aria-pressed="true">Airport ground</button>
+        <button class="tool" id="toggleRunways" type="button" aria-pressed="true">Runway lines</button>
         <button class="tool" id="toggleFixes" type="button" aria-pressed="true">Fixes</button>
         <button class="tool" id="toggleSectors" type="button" aria-pressed="true">Airspace</button>
         <button class="tool" id="toggleGrid" type="button" aria-pressed="false">Range rings</button>
@@ -113,33 +264,90 @@
 
   </div>
 
-  <section class="profile" aria-label="Vertical profile">
-    <div class="profile__bar">
-      <span class="u-label">Vertical navigation</span>
-      <span class="legend-note u-data" id="limitNote"></span>
-      <div class="profile__legend">
-        <span class="chip chip--path">Planned path</span>
-        <span class="chip chip--cloud">Cloud deck (ATIS)</span>
-        <span class="chip chip--limit">250 kt below 3000</span>
-        <span class="chip chip--terrain">Surface</span>
+  <section class="deck" aria-label="Navigation instruments and vertical profile">
+
+    <div class="deck__instruments">
+      <div class="inst" id="navLateral" data-state="idle" data-call="ok">
+        <div class="inst__head">
+          <span class="u-label">Lateral</span>
+          <span class="inst__call" id="navLateralCall">No guidance</span>
+        </div>
+        <div class="inst__scale inst__scale--h" id="navLateralBar">
+          <span class="inst__centre"></span>
+          <span class="inst__diamond" id="navLateralDiamond" style="--offset:0"></span>
+        </div>
+        <dl class="inst__data">
+          <div><dt>Course</dt><dd class="u-data" id="navLateralDtk">---</dd></div>
+          <div><dt>Track</dt><dd class="u-data" id="navLateralTrack">---</dd></div>
+          <div><dt>Off track</dt><dd class="u-data" id="navLateralXtk">--</dd></div>
+          <div><dt>Next</dt><dd class="u-data" id="navLateralNext">--</dd></div>
+        </dl>
       </div>
-      <button class="tool profile__collapse" id="profileCollapse" type="button" aria-expanded="true">Hide</button>
+
+      <div class="inst" id="navVertical" data-state="idle" data-call="ok">
+        <div class="inst__head">
+          <span class="u-label">Vertical</span>
+          <span class="inst__call" id="navVerticalCall">No guidance</span>
+        </div>
+        <div class="inst__scale inst__scale--v" id="navVerticalBar">
+          <span class="inst__centre"></span>
+          <span class="inst__diamond" id="navVerticalDiamond" style="--offset:0"></span>
+        </div>
+        <dl class="inst__data">
+          <div><dt>Make</dt><dd class="u-data" id="navVerticalTarget">--</dd></div>
+          <div><dt>By</dt><dd class="u-data" id="navVerticalBy">--</dd></div>
+          <div><dt>Off plan</dt><dd class="u-data" id="navVerticalDev">--</dd></div>
+          <div><dt>fpm</dt><dd class="u-data" id="navVerticalReq" data-strained="false">--</dd></div>
+        </dl>
+      </div>
+
+      <div class="inst inst--own">
+        <div class="inst__head">
+          <span class="u-label">Aircraft</span>
+          <span class="inst__source" id="navSource" data-state="none">No aircraft</span>
+        </div>
+        <button class="tool" id="simEnable" type="button">Drop marker</button>
+        <div class="grid-2">
+          <label class="field">
+            <span class="u-label">Alt ft</span>
+            <input id="simAltitude" type="number" min="0" max="60000" step="100" value="0" inputmode="numeric">
+          </label>
+          <label class="field">
+            <span class="u-label">Heading</span>
+            <input id="simHeading" type="number" min="0" max="360" step="1" value="0" inputmode="numeric">
+          </label>
+        </div>
+        <p class="inst__note">Drag the aircraft on the chart to rehearse. Tracking a live flight takes over automatically.</p>
+      </div>
     </div>
-    <div class="profile__plot" id="profilePlot">
-      <svg class="profile__svg" id="profileSvg" viewBox="0 0 1000 180" role="img" aria-label="Vertical profile with cloud layers and speed limit envelope"></svg>
+
+    <div class="profile">
+      <div class="profile__bar">
+        <span class="u-label">Vertical navigation</span>
+        <span class="legend-note u-data" id="limitNote"></span>
+        <div class="profile__legend">
+          <span class="chip chip--path">Planned path</span>
+          <span class="chip chip--cloud">Cloud deck</span>
+          <span class="chip chip--limit">250 kt below 3000</span>
+        </div>
+        <button class="tool profile__collapse" id="profileCollapse" type="button" aria-expanded="true">Hide</button>
+      </div>
+      <div class="profile__plot" id="profilePlot">
+        <svg class="profile__svg" id="profileSvg" viewBox="0 0 1000 180" role="img" aria-label="Vertical profile with cloud layers and speed limit envelope"></svg>
+      </div>
     </div>
+
   </section>
 
 </div>
 
-<div class="banner" id="banner" data-active="false">
-  <span id="bannerText">Overspeed</span>
-</div>
-
 <script src="js/map-data.js"></script>
+<script src="js/runway-data.js"></script>
 <script src="js/chart.js"></script>
 <script src="js/route.js"></script>
 <script src="js/profile.js"></script>
+<script src="js/instruments.js"></script>
+<script src="js/live.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

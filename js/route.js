@@ -1,8 +1,8 @@
 /* ==========================================================================
    24Nav route
-   Holds the route model, renders the route strip, and keeps the chart, the
-   readouts and the vertical profile in step. Departure and arrival are
-   endpoints; everything between them is an ordered list of fixes.
+   Owns the route model: endpoints, runways, runway extension legs, the ordered
+   fix list, climb and descent rates, and the filed flight-plan fields. Renders
+   the route strip and builds the ATC24 /createflightplan command.
    ========================================================================== */
 
 window.Nav = window.Nav || {};
@@ -10,30 +10,130 @@ window.Nav = window.Nav || {};
 (() => {
   'use strict';
 
-  const STORE_KEY = '24nav.route.v1';
+  const STORE_KEY = '24nav.route.v2';
+  const MAX_EXTENSION_NM = 20;
 
   const route = {
     departure: 'IRFD',
     arrival: 'IPPH',
+    departureRunway: '',
+    arrivalRunway: '',
     fixes: [],
     cruiseFl: 100,
+
+    // Climb and descent rates drive the vertical profile and every waypoint
+    // altitude target, so they live in the route rather than in the profile.
+    climbVs: 2500,
+    descentVs: 2000,
+    planSpeedKt: 280,
+
+    depExt: { on: false, nm: 1 },
+    arrExt: { on: false, nm: 2 },
+
+    plan: {
+      ingameCallsign: '',
+      filedCallsign: '',
+      aircraft: '',
+      flightRules: 'IFR',
+      robloxName: '',
+    },
+
     selection: null,
     listeners: [],
 
-    /* --- model ---------------------------------------------------------- */
+    /* --- lookups -------------------------------------------------------- */
 
     point(code) {
       return window.Nav.chart.points[code] || null;
     },
 
+    runwaysFor(code) {
+      const all = window.ATC24_RUNWAY_DATA || {};
+      return Array.isArray(all[code]) ? all[code] : [];
+    },
+
+    runwayGeometry(code, label) {
+      const list = this.runwaysFor(code);
+      const wanted = String(label || '').trim().toUpperCase();
+      return list.find((r) => String(r.label).toUpperCase() === wanted) || null;
+    },
+
+    /** 07L and 25R are the two ends of the same strip. */
+    reciprocal(label) {
+      const match = /^(\d{1,2})([LCR]?)$/.exec(String(label || '').trim().toUpperCase());
+      if (!match) return '';
+      const number = ((Number(match[1]) + 18 - 1) % 36) + 1;
+      const side = match[2] === 'L' ? 'R' : match[2] === 'R' ? 'L' : match[2];
+      return String(number).padStart(2, '0') + side;
+    },
+
+    /** Unit vector pointing along a runway heading in map space. */
+    headingVector(heading) {
+      const radians = (Number(heading) || 0) * Math.PI / 180;
+      return { x: Math.sin(radians), y: -Math.cos(radians) };
+    },
+
+    /**
+     * Runway extension geometry, matching the FlightBrief and DHL behaviour.
+     * The departure leg starts at the far end of the runway and runs out along
+     * the departure heading. The arrival leg starts at the landing threshold and
+     * runs back down the approach.
+     */
+    extensionGeometry(role) {
+      const departure = role === 'departure';
+      const code = departure ? this.departure : this.arrival;
+      const label = departure ? this.departureRunway : this.arrivalRunway;
+      const geometry = this.runwayGeometry(code, label);
+      if (!geometry) return null;
+      const vector = this.headingVector(geometry.heading);
+
+      if (departure) {
+        const other = this.runwayGeometry(code, this.reciprocal(geometry.label));
+        if (!other) return null;
+        return { role, origin: { x: other.x, y: other.y }, direction: vector, runway: geometry.label };
+      }
+      return {
+        role,
+        origin: { x: geometry.x, y: geometry.y },
+        direction: { x: -vector.x, y: -vector.y },
+        runway: geometry.label,
+      };
+    },
+
+    extensionPoint(role) {
+      const state = role === 'departure' ? this.depExt : this.arrExt;
+      if (!state.on) return null;
+      const geometry = this.extensionGeometry(role);
+      if (!geometry) return null;
+      const units = state.nm * window.Nav.geo.MAP_UNITS_PER_NM;
+      return {
+        name: `${geometry.runway}/${state.nm.toFixed(1)}`,
+        kind: 'extension',
+        role: role === 'departure' ? 'depExt' : 'arrExt',
+        runway: geometry.runway,
+        x: geometry.origin.x + geometry.direction.x * units,
+        y: geometry.origin.y + geometry.direction.y * units,
+      };
+    },
+
+    /* --- geometry ------------------------------------------------------- */
+
     nodes() {
       const list = [];
       const dep = this.point(this.departure);
       if (dep) list.push({ ...dep, role: 'departure', altitude: 0 });
+
+      const depExt = this.extensionPoint('departure');
+      if (depExt) list.push({ ...depExt, altitude: null });
+
       for (const fix of this.fixes) {
         const point = this.point(fix.name);
         if (point) list.push({ ...point, role: 'fix', altitude: fix.altitude });
       }
+
+      const arrExt = this.extensionPoint('arrival');
+      if (arrExt) list.push({ ...arrExt, altitude: null });
+
       const arr = this.point(this.arrival);
       if (arr) list.push({ ...arr, role: 'arrival', altitude: 0 });
       return list;
@@ -43,13 +143,12 @@ window.Nav = window.Nav || {};
       const nodes = this.nodes();
       const out = [];
       for (let i = 0; i < nodes.length - 1; i += 1) {
-        const a = nodes[i];
-        const b = nodes[i + 1];
         out.push({
-          from: a,
-          to: b,
-          nm: window.Nav.geo.distanceNm(a, b),
-          heading: window.Nav.geo.bearing(a, b),
+          index: i,
+          from: nodes[i],
+          to: nodes[i + 1],
+          nm: window.Nav.geo.distanceNm(nodes[i], nodes[i + 1]),
+          heading: window.Nav.geo.bearing(nodes[i], nodes[i + 1]),
         });
       }
       return out;
@@ -59,16 +158,118 @@ window.Nav = window.Nav || {};
       return this.legs().reduce((sum, leg) => sum + leg.nm, 0);
     },
 
+    /** Only named fixes go in the filed route. Extensions are local geometry. */
     routeString() {
       return this.fixes.map((f) => f.name).join(' ') || 'DCT';
+    },
+
+    isDirect() {
+      return this.fixes.length === 0;
+    },
+
+    /* --- flight plan command -------------------------------------------- */
+
+    flightLevel() {
+      return String(Math.round(this.cruiseFl)).padStart(3, '0');
+    },
+
+    command() {
+      const clean = (value, fallback = 'N/A') => {
+        const text = String(value || '').trim().replace(/\s+/g, ' ');
+        return text || fallback;
+      };
+      return [
+        '/createflightplan',
+        `ingamecallsign:${clean(this.plan.ingameCallsign)}`,
+        `callsign:${clean(this.plan.filedCallsign || this.plan.ingameCallsign)}`,
+        `aircraft:${clean(this.plan.aircraft)}`,
+        `flightrules:${clean(this.plan.flightRules, 'IFR').toUpperCase()}`,
+        `departing:${clean(this.departure)}`,
+        `arriving:${clean(this.arrival)}`,
+        `flightlevel:${this.flightLevel()}`,
+        `ingamename:${clean(this.plan.robloxName)}`,
+        `route:${this.routeString()}`,
+      ].join(' ');
+    },
+
+    missingPlanFields() {
+      const missing = [];
+      if (!String(this.plan.ingameCallsign).trim()) missing.push('in-game callsign');
+      if (!String(this.plan.aircraft).trim()) missing.push('aircraft');
+      if (!String(this.plan.robloxName).trim()) missing.push('Roblox username');
+      if (!this.departureRunway) missing.push('departure runway');
+      if (!this.arrivalRunway) missing.push('arrival runway');
+      return missing;
     },
 
     /* --- mutation ------------------------------------------------------- */
 
     setEndpoint(role, code) {
       if (!this.point(code)) return;
-      if (role === 'departure') this.departure = code;
-      if (role === 'arrival') this.arrival = code;
+      if (role === 'departure') {
+        this.departure = code;
+        this.departureRunway = this.defaultRunway(code, 'departure');
+      } else {
+        this.arrival = code;
+        this.arrivalRunway = this.defaultRunway(code, 'arrival');
+      }
+      this.commit();
+    },
+
+    defaultRunway(code, role) {
+      const list = this.runwaysFor(code);
+      if (!list.length) return '';
+      const other = role === 'departure' ? this.point(this.arrival) : this.point(this.departure);
+      const here = this.point(code);
+      if (!other || !here) return list[0].label;
+      // Pick the end that points the right way for the leg. Departing, that is
+      // the runway most aligned with the outbound track; arriving, the reverse.
+      const track = role === 'departure'
+        ? window.Nav.geo.bearing(here, other)
+        : window.Nav.geo.bearing(other, here);
+      let best = list[0];
+      let bestDelta = 361;
+      for (const runway of list) {
+        const delta = Math.abs(((Number(runway.heading) - track + 540) % 360) - 180);
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          best = runway;
+        }
+      }
+      return best.label;
+    },
+
+    setRunway(role, label) {
+      if (role === 'departure') this.departureRunway = String(label || '');
+      else this.arrivalRunway = String(label || '');
+      this.commit();
+    },
+
+    setExtension(role, patch) {
+      const state = role === 'departure' ? this.depExt : this.arrExt;
+      if ('on' in patch) state.on = Boolean(patch.on);
+      if ('nm' in patch) {
+        const value = Number(patch.nm);
+        state.nm = Number.isFinite(value)
+          ? Math.min(MAX_EXTENSION_NM, Math.max(0, Math.round(value * 10) / 10))
+          : state.nm;
+      }
+      this.commit();
+    },
+
+    /** Drag handler contract shared with the chart. */
+    setExtensionFromDrag(role, nm, final = false) {
+      const state = role === 'departure' ? this.depExt : this.arrExt;
+      if (nm < 0.15) {
+        state.nm = 0;
+        if (final) {
+          state.on = false;
+          state.nm = role === 'departure' ? 1 : 2;
+        }
+      } else {
+        state.on = true;
+        state.nm = Math.min(MAX_EXTENSION_NM, Math.round(nm * 10) / 10);
+      }
       this.commit();
     },
 
@@ -77,6 +278,8 @@ window.Nav = window.Nav || {};
       this.departure = this.arrival;
       this.arrival = dep;
       this.fixes.reverse();
+      this.departureRunway = this.defaultRunway(this.departure, 'departure');
+      this.arrivalRunway = this.defaultRunway(this.arrival, 'arrival');
       this.commit();
     },
 
@@ -87,21 +290,36 @@ window.Nav = window.Nav || {};
       this.commit();
     },
 
-    /** Insert a picked chart point according to the current selection. */
+    setVerticalSpeed(which, value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return;
+      const clamped = Math.min(6000, Math.max(300, Math.round(number / 100) * 100));
+      if (which === 'climb') this.climbVs = clamped;
+      if (which === 'descent') this.descentVs = clamped;
+      this.commit();
+    },
+
+    setPlanSpeed(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return;
+      this.planSpeedKt = Math.min(600, Math.max(80, Math.round(number / 5) * 5));
+      this.commit();
+    },
+
+    setPlanField(field, value) {
+      if (!(field in this.plan)) return;
+      this.plan[field] = String(value || '');
+      this.commit();
+    },
+
     addPoint(point) {
       if (!point) return;
 
       if (this.selection?.type === 'departure' && point.kind === 'airport') {
-        this.departure = point.name;
-        this.selection = null;
-        this.commit();
-        return;
+        return this.setEndpoint('departure', point.name);
       }
       if (this.selection?.type === 'arrival' && point.kind === 'airport') {
-        this.arrival = point.name;
-        this.selection = null;
-        this.commit();
-        return;
+        return this.setEndpoint('arrival', point.name);
       }
 
       const at = this.selection?.type === 'fix' ? this.selection.index + 1
@@ -118,7 +336,7 @@ window.Nav = window.Nav || {};
 
       this.fixes.splice(at, 0, { name: point.name, altitude: null });
       this.selection = { type: 'fix', index: at };
-      this.commit();
+      return this.commit();
     },
 
     removeFix(index) {
@@ -133,17 +351,13 @@ window.Nav = window.Nav || {};
     setFixAltitude(index, value) {
       const fix = this.fixes[index];
       if (!fix) return;
-      const clean = String(value).trim();
-      if (!clean) {
+      const digits = String(value).replace(/[^\d]/g, '');
+      if (!digits) {
         fix.altitude = null;
       } else {
-        const number = Number(clean.replace(/[^\d]/g, ''));
-        if (!Number.isFinite(number) || number <= 0) {
-          fix.altitude = null;
-        } else {
-          // Three digits or fewer is read as a flight level, anything more as feet.
-          fix.altitude = clean.replace(/[^\d]/g, '').length <= 3 ? number * 100 : number;
-        }
+        const number = Number(digits);
+        // Three digits or fewer reads as a flight level, more reads as feet.
+        fix.altitude = digits.length <= 3 ? number * 100 : number;
       }
       this.commit();
     },
@@ -176,8 +390,16 @@ window.Nav = window.Nav || {};
         window.localStorage.setItem(STORE_KEY, JSON.stringify({
           departure: this.departure,
           arrival: this.arrival,
+          departureRunway: this.departureRunway,
+          arrivalRunway: this.arrivalRunway,
           fixes: this.fixes,
           cruiseFl: this.cruiseFl,
+          climbVs: this.climbVs,
+          descentVs: this.descentVs,
+          planSpeedKt: this.planSpeedKt,
+          depExt: this.depExt,
+          arrExt: this.arrExt,
+          plan: this.plan,
         }));
       } catch (error) {
         // Storage can be blocked. The route still works for this session.
@@ -185,21 +407,46 @@ window.Nav = window.Nav || {};
     },
 
     restore() {
+      let saved = null;
       try {
-        const raw = window.localStorage.getItem(STORE_KEY);
-        if (!raw) return;
-        const saved = JSON.parse(raw);
+        saved = JSON.parse(window.localStorage.getItem(STORE_KEY) || 'null');
+      } catch (error) {
+        saved = null;
+      }
+      if (saved) {
         if (this.point(saved.departure)) this.departure = saved.departure;
         if (this.point(saved.arrival)) this.arrival = saved.arrival;
         if (Number.isFinite(Number(saved.cruiseFl))) this.cruiseFl = Number(saved.cruiseFl);
+        if (Number.isFinite(Number(saved.climbVs))) this.climbVs = Number(saved.climbVs);
+        if (Number.isFinite(Number(saved.descentVs))) this.descentVs = Number(saved.descentVs);
+        if (Number.isFinite(Number(saved.planSpeedKt))) this.planSpeedKt = Number(saved.planSpeedKt);
         if (Array.isArray(saved.fixes)) {
           this.fixes = saved.fixes
             .filter((f) => this.point(f?.name))
             .map((f) => ({ name: f.name, altitude: Number.isFinite(Number(f.altitude)) ? Number(f.altitude) : null }));
         }
-      } catch (error) {
-        // Ignore malformed storage and start with the default route.
+        for (const [key, target] of [['depExt', this.depExt], ['arrExt', this.arrExt]]) {
+          const value = saved[key];
+          if (!value) continue;
+          target.on = Boolean(value.on);
+          if (Number.isFinite(Number(value.nm))) {
+            target.nm = Math.min(MAX_EXTENSION_NM, Math.max(0, Number(value.nm)));
+          }
+        }
+        if (saved.plan && typeof saved.plan === 'object') {
+          for (const field of Object.keys(this.plan)) {
+            if (typeof saved.plan[field] === 'string') this.plan[field] = saved.plan[field];
+          }
+        }
+        if (this.runwayGeometry(this.departure, saved.departureRunway)) {
+          this.departureRunway = saved.departureRunway;
+        }
+        if (this.runwayGeometry(this.arrival, saved.arrivalRunway)) {
+          this.arrivalRunway = saved.arrivalRunway;
+        }
       }
+      if (!this.departureRunway) this.departureRunway = this.defaultRunway(this.departure, 'departure');
+      if (!this.arrivalRunway) this.arrivalRunway = this.defaultRunway(this.arrival, 'arrival');
     },
   };
 
@@ -212,6 +459,7 @@ window.Nav = window.Nav || {};
     init() {
       this.list = document.getElementById('strip');
       this.empty = document.getElementById('stripEmpty');
+
       this.list.addEventListener('click', (event) => {
         const drop = event.target.closest('[data-drop]');
         if (drop) {
@@ -222,9 +470,10 @@ window.Nav = window.Nav || {};
         const leg = event.target.closest('[data-select-type]');
         if (!leg) return;
         const type = leg.dataset.selectType;
-        const index = Number(leg.dataset.selectIndex);
-        route.select(type === 'fix' ? { type, index } : { type });
+        if (type === 'depExt' || type === 'arrExt') return;
+        route.select(type === 'fix' ? { type, index: Number(leg.dataset.selectIndex) } : { type });
       });
+
       this.list.addEventListener('change', (event) => {
         const input = event.target.closest('[data-alt]');
         if (!input) return;
@@ -235,27 +484,36 @@ window.Nav = window.Nav || {};
     render() {
       const legs = route.legs();
       const nodes = route.nodes();
+      const targets = window.Nav.profile.waypointTargets();
       this.list.innerHTML = '';
       this.empty.classList.toggle('u-hidden', route.fixes.length > 0);
 
+      let fixIndex = -1;
       nodes.forEach((node, i) => {
         const isFix = node.role === 'fix';
-        const fixIndex = i - 1;
+        if (isFix) fixIndex += 1;
+        const localIndex = fixIndex;
+        const isExtension = node.kind === 'extension';
         const selected = route.selection?.type === node.role
-          && (!isFix || route.selection.index === fixIndex);
+          && (!isFix || route.selection.index === localIndex);
 
         const item = document.createElement('li');
-        const button = document.createElement('div');
-        button.className = `leg${isFix ? '' : ' leg--endpoint'}`;
-        button.setAttribute('role', 'button');
-        button.tabIndex = 0;
-        button.dataset.selectType = node.role;
-        button.dataset.selectIndex = String(isFix ? fixIndex : -1);
-        if (selected) button.setAttribute('aria-current', 'true');
+        const row = document.createElement('div');
+        row.className = `leg${isFix ? '' : ' leg--endpoint'}${isExtension ? ' leg--extension' : ''}`;
+        row.dataset.selectType = node.role;
+        row.dataset.selectIndex = String(isFix ? localIndex : -1);
+        if (!isExtension) {
+          row.setAttribute('role', 'button');
+          row.tabIndex = 0;
+        }
+        if (selected) row.setAttribute('aria-current', 'true');
 
         const pin = document.createElement('span');
         pin.className = 'leg__pin';
-        pin.textContent = node.role === 'departure' ? 'DEP' : node.role === 'arrival' ? 'ARR' : String(fixIndex + 1);
+        pin.textContent = node.role === 'departure' ? 'DEP'
+          : node.role === 'arrival' ? 'ARR'
+          : isExtension ? 'EXT'
+          : String(localIndex + 1);
 
         const body = document.createElement('span');
         const name = document.createElement('span');
@@ -264,24 +522,30 @@ window.Nav = window.Nav || {};
         const meta = document.createElement('span');
         meta.className = 'leg__meta';
         const inbound = legs[i - 1];
-        meta.textContent = inbound
-          ? `${window.Nav.geo.padHeading(inbound.heading)}\u00B0  ${inbound.nm.toFixed(1)} NM`
-          : node.kind === 'airport' ? 'Airport' : 'Fix';
+        const target = targets[i];
+        const parts = [];
+        if (inbound) parts.push(`${window.Nav.geo.padHeading(inbound.heading)}\u00B0 ${inbound.nm.toFixed(1)} NM`);
+        else parts.push(node.kind === 'airport' ? 'Airport' : 'Fix');
+        if (target && target.targetFt > 0) {
+          parts.push(`${target.source === 'constraint' ? 'AT' : 'plan'} ${window.Nav.profile.formatAltitude(target.targetFt)}`);
+        }
+        meta.textContent = parts.join('   ');
         body.appendChild(name);
         body.appendChild(meta);
 
         const tail = document.createElement('span');
+        tail.className = 'leg__tail';
         if (isFix) {
           const alt = document.createElement('input');
           alt.className = 'leg__alt u-data';
-          alt.dataset.alt = String(fixIndex);
-          alt.placeholder = 'FL';
+          alt.dataset.alt = String(localIndex);
+          alt.placeholder = target ? String(Math.round(target.targetFt / 100)).padStart(3, '0') : 'FL';
           alt.value = node.altitude ? String(Math.round(node.altitude / 100)).padStart(3, '0') : '';
           alt.setAttribute('aria-label', `Altitude constraint at ${node.name}`);
           const drop = document.createElement('button');
           drop.type = 'button';
           drop.className = 'leg__drop';
-          drop.dataset.drop = String(fixIndex);
+          drop.dataset.drop = String(localIndex);
           drop.title = `Remove ${node.name}`;
           drop.setAttribute('aria-label', `Remove ${node.name}`);
           drop.textContent = '\u00D7';
@@ -289,10 +553,10 @@ window.Nav = window.Nav || {};
           tail.appendChild(drop);
         }
 
-        button.appendChild(pin);
-        button.appendChild(body);
-        button.appendChild(tail);
-        item.appendChild(button);
+        row.appendChild(pin);
+        row.appendChild(body);
+        row.appendChild(tail);
+        item.appendChild(row);
         this.list.appendChild(item);
       });
     },

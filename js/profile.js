@@ -1,8 +1,18 @@
 /* ==========================================================================
    24Nav vertical profile
-   Draws the planned vertical path against distance, with cloud decks read from
-   live ATIS and the 250 kt below 3000 ft envelope shaded as a hard boundary.
-   Altitude constraints entered on a fix bend the path through that fix.
+   Builds the planned vertical path and the altitude every waypoint should be
+   reached at, draws it against distance with ATIS cloud decks and the 250 kt
+   below 3000 ft envelope, and feeds the vertical guidance instrument.
+
+   Gradients come from the pilot's selected climb and descent rates rather than
+   from real-world figures. The planekit moves aircraft at 0.5442765 studs/sec
+   per knot instead of the true 0.918650795, so an aircraft reading 280 kt
+   crosses the ground at 280 * 0.592172785 = 166 kt:
+
+     ft per NM = rate(fpm) / (indicated_kt * 0.592172785 / 60)
+
+   The feed also slows aircraft linearly above 2000 ft, which makes the real
+   gradients slightly steeper still.
    ========================================================================== */
 
 window.Nav = window.Nav || {};
@@ -10,35 +20,16 @@ window.Nav = window.Nav || {};
 (() => {
   'use strict';
 
-  /*
-   * Gradients are derived from the game's own physics, not from real-world
-   * numbers. The planekit moves aircraft at 0.5442765 studs/sec per knot
-   * instead of the true 0.918650795, so an aircraft reading 250 kt crosses the
-   * ground at 250 * 0.592172785 = 148 kt. That leaves roughly two and a half
-   * times longer to climb per nautical mile than a real aircraft gets.
-   *
-   *   ft per NM = rate(fpm) / (indicated_kt * 0.592172785 / 60)
-   *
-   * Climb   3000 fpm at 250 kt indicated -> 1216 ft/NM
-   * Descent 2500 fpm at 280 kt indicated ->  905 ft/NM
-   *
-   * The feed also slows aircraft linearly above 2000 ft, which makes the real
-   * gradients slightly steeper still. Tune these two numbers against how you
-   * actually fly rather than treating them as fixed.
-   */
   const GAME_KNOT_TO_REAL = 0.592172785;
-  const CLIMB_FT_PER_NM = Math.round(3000 / (250 * GAME_KNOT_TO_REAL / 60));
-  const DESCENT_FT_PER_NM = Math.round(2500 / (280 * GAME_KNOT_TO_REAL / 60));
   const SPEED_LIMIT_ALT = 3000;
-  const SPEED_LIMIT_KT = 250;
   const PAD = { top: 16, right: 14, bottom: 24, left: 48 };
-
   const COVER_LABEL = { FEW: 'FEW', SCT: 'SCT', BKN: 'BKN', OVC: 'OVC', VV: 'VV' };
 
   const profile = {
     svg: null,
     atis: { departure: null, arrival: null },
     note: '',
+    built: null,
 
     init() {
       this.svg = document.getElementById('profileSvg');
@@ -48,6 +39,27 @@ window.Nav = window.Nav || {};
       } else {
         window.addEventListener('resize', () => this.render());
       }
+    },
+
+    /* --- gradients ------------------------------------------------------ */
+
+    groundNmPerMinute() {
+      const indicated = Number(window.Nav.route.planSpeedKt) || 280;
+      return Math.max(0.5, indicated * GAME_KNOT_TO_REAL / 60);
+    },
+
+    climbGradient() {
+      return (Number(window.Nav.route.climbVs) || 2500) / this.groundNmPerMinute();
+    },
+
+    descentGradient() {
+      return (Number(window.Nav.route.descentVs) || 2000) / this.groundNmPerMinute();
+    },
+
+    formatAltitude(ft) {
+      const value = Math.max(0, Math.round(Number(ft) || 0));
+      if (value >= 1000) return `FL${String(Math.round(value / 100)).padStart(3, '0')}`;
+      return `${value} ft`;
     },
 
     /* --- ATIS cloud parsing --------------------------------------------- */
@@ -94,16 +106,20 @@ window.Nav = window.Nav || {};
       let run = 0;
       return nodes.map((node, i) => {
         if (i > 0) run += window.Nav.geo.distanceNm(nodes[i - 1], node);
-        return { name: node.name, role: node.role, d: run, altitude: node.altitude };
+        return { name: node.name, role: node.role, kind: node.kind, d: run, altitude: node.altitude };
       });
     },
 
     /**
      * Anchors are the points the path must pass through: both ends on the
      * surface, plus any fix carrying an altitude constraint. A cruise plateau is
-     * then inserted into the longest segment that has room for it.
+     * then placed in whichever segment can carry the most height, so a route
+     * that cannot reach the filed level still climbs and descends through every
+     * altitude the pilot asked for.
      */
     buildPath(stations, cruiseFt) {
+      const climb = this.climbGradient();
+      const descent = this.descentGradient();
       const total = stations.length ? stations[stations.length - 1].d : 0;
       if (total <= 0) return { points: [], total: 0, cruiseFt, note: '' };
 
@@ -115,10 +131,6 @@ window.Nav = window.Nav || {};
       }
       anchors.push({ d: total, alt: 0 });
 
-      // The cruise plateau goes in whichever segment can carry the most height.
-      // Ties are broken by the longest level section. Constraints are never
-      // discarded, so a route that cannot reach the filed level still climbs
-      // and descends through every altitude the pilot asked for.
       let best = { index: -1, peak: -Infinity, room: -Infinity, at: 0 };
       for (let i = 0; i < anchors.length - 1; i += 1) {
         const a = anchors[i];
@@ -126,10 +138,10 @@ window.Nav = window.Nav || {};
         const span = b.d - a.d;
         if (span <= 0) continue;
 
-        const climbDistance = (b.alt - a.alt + DESCENT_FT_PER_NM * span) / (CLIMB_FT_PER_NM + DESCENT_FT_PER_NM);
-        const unclamped = a.alt + CLIMB_FT_PER_NM * climbDistance;
+        const climbDistance = (b.alt - a.alt + descent * span) / (climb + descent);
+        const unclamped = a.alt + climb * climbDistance;
         const peak = Math.min(cruiseFt, Math.max(a.alt, b.alt, unclamped));
-        const need = (peak - a.alt) / CLIMB_FT_PER_NM + (peak - b.alt) / DESCENT_FT_PER_NM;
+        const need = (peak - a.alt) / climb + (peak - b.alt) / descent;
         const room = span - need;
 
         if (peak > best.peak + 1 || (Math.abs(peak - best.peak) <= 1 && room > best.room)) {
@@ -145,10 +157,10 @@ window.Nav = window.Nav || {};
         if (i !== best.index) continue;
 
         if (best.room > 0.05) {
-          points.push({ d: a.d + (best.peak - a.alt) / CLIMB_FT_PER_NM, alt: best.peak, mark: 'TOC' });
-          points.push({ d: b.d - (best.peak - b.alt) / DESCENT_FT_PER_NM, alt: best.peak, mark: 'TOD' });
+          points.push({ d: a.d + (best.peak - a.alt) / climb, alt: best.peak, mark: 'TOC' });
+          points.push({ d: b.d - (best.peak - b.alt) / descent, alt: best.peak, mark: 'TOD' });
         } else if (best.peak > Math.max(a.alt, b.alt) + 1) {
-          // No level segment fits. Draw the achievable peak instead of a
+          // No level segment fits, so draw the achievable peak rather than a
           // level-off the aircraft could never hold.
           points.push({ d: best.at, alt: best.peak, mark: 'TOC' });
         }
@@ -157,14 +169,29 @@ window.Nav = window.Nav || {};
 
       const achieved = Math.max(...points.map((p) => p.alt));
       const note = achieved < cruiseFt - 50
-        ? `Too short for FL${String(Math.round(cruiseFt / 100)).padStart(3, '0')}. Best achievable is about FL${String(Math.round(achieved / 1000) * 10).padStart(3, '0')}.`
+        ? `Too short for FL${String(Math.round(cruiseFt / 100)).padStart(3, '0')} at ${Math.round(window.Nav.route.climbVs)} fpm. Best is ${this.formatAltitude(achieved)}.`
         : '';
 
       return { points, total, cruiseFt: Math.max(achieved, 1000), note };
     },
 
-    /** Altitude of the planned path at a given distance. */
+    current() {
+      if (!this.built) this.recompute();
+      return this.built;
+    },
+
+    recompute() {
+      const stations = this.stations();
+      this.built = this.buildPath(stations, window.Nav.route.cruiseFl * 100);
+      this.built.stations = stations;
+      this.note = this.built.note;
+      return this.built;
+    },
+
+    /** Altitude of the planned path at a given along-track distance. */
     altitudeAt(points, d) {
+      if (!points?.length) return 0;
+      if (d <= points[0].d) return points[0].alt;
       for (let i = 0; i < points.length - 1; i += 1) {
         const a = points[i];
         const b = points[i + 1];
@@ -172,7 +199,28 @@ window.Nav = window.Nav || {};
         if (b.d === a.d) return b.alt;
         return a.alt + (b.alt - a.alt) * ((d - a.d) / (b.d - a.d));
       }
-      return points.length ? points[points.length - 1].alt : 0;
+      return points[points.length - 1].alt;
+    },
+
+    targetAt(d) {
+      return this.altitudeAt(this.current().points, d);
+    },
+
+    /**
+     * The altitude to be at over each route node, aligned index for index with
+     * route.nodes(). A fix carrying a constraint reports it; everything else
+     * reports the planned path, which on a direct route is set purely by the
+     * selected climb and descent rates.
+     */
+    waypointTargets() {
+      const built = this.recompute();
+      return built.stations.map((station) => ({
+        name: station.name,
+        role: station.role,
+        d: station.d,
+        targetFt: Math.round(this.altitudeAt(built.points, station.d)),
+        source: Number.isFinite(station.altitude) && station.altitude > 0 ? 'constraint' : 'computed',
+      }));
     },
 
     /** Distance at which the path first passes above the speed-limit altitude. */
@@ -208,15 +256,12 @@ window.Nav = window.Nav || {};
       const el = window.Nav.svgEl;
       const box = this.svg.parentElement.getBoundingClientRect();
       const W = Math.max(320, Math.round(box.width));
-      const H = Math.max(120, Math.round(box.height));
+      const H = Math.max(110, Math.round(box.height));
       this.svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
       window.Nav.svgClear(this.svg);
 
-      const stations = this.stations();
-      const cruiseFt = window.Nav.route.cruiseFl * 100;
-      const built = this.buildPath(stations, cruiseFt);
-      this.note = built.note;
-
+      const built = this.recompute();
+      const stations = built.stations;
       const plotW = W - PAD.left - PAD.right;
       const plotH = H - PAD.top - PAD.bottom;
       const topFt = Math.max(6000, Math.ceil((built.cruiseFt * 1.18) / 5000) * 5000);
@@ -225,30 +270,24 @@ window.Nav = window.Nav || {};
       const X = (d) => PAD.left + (total > 0 ? (d / total) * plotW : 0);
       const Y = (alt) => PAD.top + plotH - (Math.max(0, alt) / topFt) * plotH;
 
-      /* surface */
       this.svg.appendChild(el('rect', {
         class: 'profile-ground', x: PAD.left, y: Y(0), width: plotW, height: PAD.bottom - 6,
       }));
 
-      /* speed-limit envelope */
       this.svg.appendChild(el('rect', {
         class: 'profile-limit',
         x: PAD.left, y: Y(SPEED_LIMIT_ALT), width: plotW, height: Y(0) - Y(SPEED_LIMIT_ALT),
       }));
-      // Centred, because both ends of the strip belong to the cloud decks.
-      this.svg.appendChild(el('text', {
-        class: 'profile-alert', x: PAD.left + plotW / 2, y: Y(SPEED_LIMIT_ALT) - 5,
-        'text-anchor': 'middle',
-      }, `${SPEED_LIMIT_KT} KT MAX BELOW ${SPEED_LIMIT_ALT}`));
+      // The shaded band and the legend chip carry this, so no caption is drawn
+      // inside the plot where it would fight the aircraft marker for the middle
+      // of the strip.
 
-      /* cloud decks, departure over the first quarter and arrival over the last */
       const decks = [
         { role: 'departure', x: PAD.left, width: plotW * 0.26 },
         { role: 'arrival', x: PAD.left + plotW * 0.74, width: plotW * 0.26 },
       ];
       for (const deck of decks) {
-        const layers = this.atis[deck.role]?.layers || [];
-        for (const layer of layers) {
+        for (const layer of this.atis[deck.role]?.layers || []) {
           if (layer.baseFt > topFt) continue;
           const y = Y(Math.min(layer.topFt, topFt));
           const height = Math.max(3, Y(layer.baseFt) - y);
@@ -263,7 +302,6 @@ window.Nav = window.Nav || {};
         }
       }
 
-      /* altitude axis */
       const stepFt = topFt > 30000 ? 10000 : topFt > 12000 ? 5000 : 2000;
       for (let alt = 0; alt <= topFt; alt += stepFt) {
         const y = Y(alt);
@@ -278,17 +316,15 @@ window.Nav = window.Nav || {};
         return;
       }
 
-      /* fix ticks */
       for (const station of stations) {
         const x = X(station.d);
         this.svg.appendChild(el('line', {
           class: 'profile-axis', x1: x, y1: PAD.top, x2: x, y2: Y(0),
-          opacity: station.role === 'fix' ? 0.5 : 1,
+          opacity: station.role === 'fix' ? 0.5 : station.kind === 'extension' ? 0.3 : 1,
         }));
         this.svg.appendChild(el('text', { class: 'profile-fix', x, y: H - 8 }, station.name));
       }
 
-      /* planned path */
       this.svg.appendChild(el('polyline', {
         class: 'profile-path',
         points: built.points.map((p) => `${X(p.d)},${Y(p.alt)}`).join(' '),
@@ -302,14 +338,22 @@ window.Nav = window.Nav || {};
         }
       }
 
-      /* speed-limit crossings, marked on the plot and named in the legend so the
-         numbers do not fight the cloud labels for the same corner */
+      // Altitude to be at over each waypoint, which is the number the vertical
+      // guidance instrument is steering towards.
+      for (const target of this.waypointTargets()) {
+        if (target.role === 'departure' || target.role === 'arrival') continue;
+        if (target.targetFt < 200) continue;
+        this.svg.appendChild(el('text', {
+          class: `profile-target${target.source === 'constraint' ? ' profile-target--hard' : ''}`,
+          x: X(target.d), y: Y(target.targetFt) - 9, 'text-anchor': 'middle',
+        }, this.formatAltitude(target.targetFt)));
+      }
+
       const crossings = this.limitCrossings(built.points);
       for (const d of [crossings.out, crossings.inbound]) {
         if (d === null) continue;
         this.svg.appendChild(el('circle', {
-          class: 'profile-node', cx: X(d), cy: Y(SPEED_LIMIT_ALT), r: 4,
-          stroke: 'var(--warn)',
+          class: 'profile-node', cx: X(d), cy: Y(SPEED_LIMIT_ALT), r: 4, stroke: 'var(--warn)',
         }));
       }
       const limitNote = document.getElementById('limitNote');
@@ -320,7 +364,17 @@ window.Nav = window.Nav || {};
         limitNote.textContent = parts.length ? `Applies over the ${parts.join(' and ')}` : '';
       }
 
-      /* cloud penetration caution: cruise sitting inside a solid deck */
+      // Ownship, so the profile shows where the aircraft actually is against plan.
+      const own = window.Nav.instruments?.vertical();
+      if (own && Number.isFinite(own.alongNm)) {
+        const x = X(Math.max(0, Math.min(total, own.alongNm)));
+        const y = Y(own.altitude);
+        this.svg.appendChild(el('line', {
+          class: 'profile-own-link', x1: x, y1: y, x2: x, y2: Y(own.targetFt),
+        }));
+        this.svg.appendChild(el('circle', { class: 'profile-own', cx: x, cy: y, r: 4.5 }));
+      }
+
       for (const role of ['departure', 'arrival']) {
         const ceiling = this.ceilingFt(role);
         if (ceiling === null) continue;

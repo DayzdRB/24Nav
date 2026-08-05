@@ -760,14 +760,31 @@ textarea {
 
 /* --- vertical profile ---------------------------------------------------- */
 
+.deck {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  height: var(--deck-height);
+  border-top: 1px solid var(--bezel-edge);
+  background: linear-gradient(180deg, var(--glass), var(--bezel));
+}
+
+.deck__instruments {
+  display: flex;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border-right: 1px solid var(--rule);
+}
+
 .profile {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: var(--s2);
-  height: var(--profile-height);
+  min-width: 0;
   padding: var(--s2) var(--s4) var(--s3);
-  border-top: 1px solid var(--bezel-edge);
-  background: linear-gradient(180deg, var(--glass), var(--bezel));
+}
+
+.app[data-profile="collapsed"] .deck {
+  height: auto;
 }
 
 .profile__bar {
@@ -798,10 +815,6 @@ textarea {
   display: block;
   width: 100%;
   height: 100%;
-}
-
-.app[data-profile="collapsed"] .profile {
-  height: auto;
 }
 
 .app[data-profile="collapsed"] .profile__plot {
@@ -1003,6 +1016,879 @@ textarea {
 
 @media (min-width: 62.0625rem) {
   .rail__toggle {
+    display: none;
+  }
+}
+
+
+/* --- clickable targets ---------------------------------------------------- */
+
+/* Symbols are drawn with fill:none, so without a transparent hit area only the
+   1.25px stroke would respond and adding a waypoint becomes a test of aim. */
+.pick-hit {
+  fill: transparent;
+  stroke: transparent;
+  pointer-events: all;
+}
+
+.apt-symbol--core {
+  fill: var(--ink);
+}
+
+/* --- airspace labels ----------------------------------------------------- */
+
+.sector-label {
+  pointer-events: none;
+}
+
+.sector-tag--freq {
+  fill: rgba(79, 216, 255, 0.36);
+}
+
+/* --- route symbols ------------------------------------------------------- */
+
+/* An open ring rather than a filled disc, so the airport symbol and its ground
+   artwork stay visible underneath. */
+.route-ring {
+  fill: none;
+  stroke: var(--route);
+  stroke-width: 1.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.route-node--ext {
+  stroke-dasharray: 3 2;
+}
+
+/* --- runway extensions --------------------------------------------------- */
+
+.ext-track {
+  fill: none;
+  stroke: rgba(79, 216, 255, 0.16);
+  stroke-width: 1;
+  stroke-dasharray: 2 5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.ext-live {
+  fill: none;
+  stroke: var(--data);
+  stroke-width: 1.75;
+  stroke-dasharray: 7 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.ext-handle {
+  cursor: grab;
+}
+
+.ext-handle:active {
+  cursor: grabbing;
+}
+
+.ext-diamond {
+  fill: var(--bezel);
+  stroke: var(--data);
+  stroke-width: 1.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.ext-handle[data-on="false"] .ext-diamond {
+  stroke: var(--ink-3);
+  stroke-dasharray: 3 2;
+}
+
+.ext-handle:hover .ext-diamond {
+  stroke: var(--route);
+}
+
+.ext-label {
+  font-family: var(--font-data);
+  font-size: 8px;
+  fill: var(--data);
+  text-anchor: middle;
+  paint-order: stroke fill;
+  stroke: var(--bezel);
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.ext-handle[data-on="false"] .ext-label {
+  fill: var(--ink-3);
+}
+
+/* --- ownship ------------------------------------------------------------- */
+
+.ownship {
+  cursor: grab;
+}
+
+.ownship:active {
+  cursor: grabbing;
+}
+
+.ownship-symbol {
+  fill: var(--engaged);
+  stroke: var(--bezel);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.ownship[data-source="live"] .ownship-symbol {
+  fill: var(--ink);
+}
+
+.ownship-label {
+  font-family: var(--font-data);
+  font-size: 9px;
+  fill: var(--engaged);
+  text-anchor: middle;
+  paint-order: stroke fill;
+  stroke: var(--bezel);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* --- profile additions --------------------------------------------------- */
+
+.profile-target {
+  font-family: var(--font-data);
+  font-size: 8.5px;
+  fill: var(--ink-2);
+  paint-order: stroke fill;
+  stroke: var(--bezel);
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+}
+
+.profile-target--hard {
+  fill: var(--data);
+}
+
+.profile-own {
+  fill: var(--engaged);
+  stroke: var(--bezel);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.profile-own-link {
+  stroke: var(--engaged);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* --- rail tabs and layout ------------------------------------------------ */
+
+.rail__tabs {
+  display: flex;
+  border-bottom: 1px solid var(--bezel-edge);
+}
+
+.rail__tab {
+  flex: 1;
+  min-width: 0;
+  padding: var(--s2) var(--s1);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font-family: var(--font-display);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+
+.rail__tab:hover {
+  color: var(--ink);
+}
+
+.rail__tab[aria-selected="true"] {
+  border-bottom-color: var(--route);
+  color: var(--ink);
+}
+
+.rail {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.rail__panel {
+  display: none;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.rail[data-tab="route"] .rail__panel[data-panel="route"],
+.rail[data-tab="plan"] .rail__panel[data-panel="plan"] {
+  display: grid;
+}
+
+.rail__body--stack {
+  display: grid;
+  align-content: start;
+  gap: var(--s3);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s2);
+}
+
+.field__note {
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--ink-3);
+}
+
+/* --- runway extension controls ------------------------------------------- */
+
+.ext {
+  display: grid;
+  gap: var(--s2);
+  margin: 0;
+  padding: var(--s2) var(--s3) var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+}
+
+.ext legend {
+  padding: 0 var(--s1);
+}
+
+.ext__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.ext__row .tool {
+  flex: 1;
+  justify-content: center;
+}
+
+.ext__nm {
+  width: 4.5rem;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-sm);
+  background: var(--glass-sunken);
+  font-size: var(--fs-sm);
+  color: var(--data);
+  text-align: right;
+}
+
+.ext__nm:disabled {
+  color: var(--ink-3);
+  opacity: 0.6;
+}
+
+.ext__hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--ink-3);
+}
+
+/* --- flight plan command ------------------------------------------------- */
+
+.command {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-md);
+  background: var(--glass-sunken);
+}
+
+.command__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.command__text {
+  display: block;
+  max-height: 8.5rem;
+  overflow-y: auto;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--data);
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.command__note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--ink-3);
+}
+
+.command__note[data-state="warn"] {
+  color: var(--caution);
+}
+
+.command__note[data-state="ok"] {
+  color: var(--engaged);
+}
+
+.tool--copy[aria-pressed] {
+  border-color: var(--route);
+}
+
+.tool--copy {
+  border-color: var(--rule-strong);
+  color: var(--ink);
+}
+
+.tool--copy:hover {
+  border-color: var(--route);
+  color: var(--route);
+}
+
+/* --- guidance instruments ------------------------------------------------ */
+
+.inst {
+  display: grid;
+  align-content: start;
+  gap: var(--s2);
+  width: var(--inst-width);
+  padding: var(--s2);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--glass-sunken);
+}
+
+.inst--own {
+  width: 11rem;
+}
+
+.inst__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.inst__call {
+  font-family: var(--font-display);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.inst[data-state="active"][data-call="ok"] .inst__call {
+  color: var(--engaged);
+}
+
+.inst[data-state="active"][data-call="left"] .inst__call,
+.inst[data-state="active"][data-call="right"] .inst__call,
+.inst[data-state="active"][data-call="up"] .inst__call,
+.inst[data-state="active"][data-call="down"] .inst__call {
+  color: var(--caution);
+}
+
+.inst__source {
+  font-family: var(--font-data);
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+.inst__source[data-state="live"] {
+  color: var(--engaged);
+}
+
+.inst__source[data-state="sim"] {
+  color: var(--caution);
+}
+
+.inst__scale {
+  position: relative;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  background: var(--glass);
+}
+
+.inst__scale--h {
+  height: 1.25rem;
+}
+
+.inst__scale--v {
+  height: 3rem;
+}
+
+.inst__centre {
+  position: absolute;
+  background: var(--rule-strong);
+}
+
+.inst__scale--h .inst__centre {
+  top: 15%;
+  bottom: 15%;
+  left: 50%;
+  width: 1px;
+}
+
+.inst__scale--v .inst__centre {
+  left: 15%;
+  right: 15%;
+  top: 50%;
+  height: 1px;
+}
+
+.inst__diamond {
+  position: absolute;
+  width: 0.5rem;
+  height: 0.5rem;
+  background: var(--route);
+  box-shadow: var(--glow-route);
+  transform: rotate(45deg);
+  transition: left var(--t-fast), top var(--t-fast);
+}
+
+.inst__scale--h .inst__diamond {
+  top: 50%;
+  left: calc(50% + var(--offset, 0) * 42%);
+  margin: -0.25rem 0 0 -0.25rem;
+}
+
+.inst__scale--v .inst__diamond {
+  left: 50%;
+  top: calc(50% + var(--offset, 0) * -42%);
+  margin: -0.25rem 0 0 -0.25rem;
+}
+
+.inst[data-state="idle"] .inst__diamond {
+  background: var(--ink-3);
+  box-shadow: none;
+}
+
+.inst__data {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+}
+
+.inst__data > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.inst__data dt {
+  font-family: var(--font-display);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.inst__data dd {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.inst__data dd[data-strained="true"] {
+  color: var(--warn);
+}
+
+.inst__note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+  color: var(--ink-3);
+}
+
+.inst--own .field input {
+  padding: var(--s1) var(--s2);
+  font-size: var(--fs-sm);
+}
+
+/* --- route strip additions ----------------------------------------------- */
+
+.leg__tail {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.leg--extension {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.leg--extension .leg__name {
+  color: var(--data);
+}
+
+/* --- narrow screens ------------------------------------------------------ */
+
+@media (max-width: 78rem) {
+  .inst--own {
+    display: none;
+  }
+}
+
+@media (max-width: 62rem) {
+  .deck {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .deck__instruments {
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+    overflow-x: auto;
+  }
+
+  .inst {
+    flex: none;
+  }
+
+  .profile {
+    height: var(--profile-height);
+  }
+}
+
+
+/* --- master caution ------------------------------------------------------- */
+
+/* One annunciator does the whole job: dark when clear, flashing when the limit
+   is broken, steady once the pilot has acknowledged it. */
+.caution {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 13.5rem;
+  padding: var(--s1) var(--s3) var(--s1) var(--s2);
+  border: 1px solid var(--bezel-edge);
+  border-radius: var(--r-md);
+  background: var(--glass-sunken);
+  text-align: left;
+  cursor: default;
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+
+.caution__lamp {
+  flex: none;
+  width: 0.6rem;
+  height: 1.6rem;
+  border-radius: 2px;
+  background: rgba(147, 168, 184, 0.18);
+}
+
+.caution__body {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.caution__title {
+  font-family: var(--font-display);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.caution__detail {
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.caution[data-state="active"] {
+  border-color: var(--warn);
+  background: rgba(48, 8, 10, 0.9);
+  box-shadow: var(--glow-warn);
+  cursor: pointer;
+  animation: caution-flash 0.9s steps(1, end) infinite;
+}
+
+.caution[data-state="active"] .caution__lamp {
+  background: var(--warn);
+}
+
+.caution[data-state="active"] .caution__title,
+.caution[data-state="active"] .caution__detail {
+  color: var(--warn);
+}
+
+.caution[data-state="acked"] {
+  border-color: var(--caution);
+  background: rgba(46, 30, 4, 0.85);
+  cursor: pointer;
+}
+
+.caution[data-state="acked"] .caution__lamp {
+  background: var(--caution);
+}
+
+.caution[data-state="acked"] .caution__title,
+.caution[data-state="acked"] .caution__detail {
+  color: var(--caution);
+}
+
+@keyframes caution-flash {
+  50% {
+    border-color: rgba(255, 59, 59, 0.3);
+    box-shadow: none;
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caution[data-state="active"] {
+    animation: none;
+  }
+}
+
+/* --- relay link state ---------------------------------------------------- */
+
+.link {
+  font-size: var(--fs-md) !important;
+  color: var(--ink-3);
+}
+
+.link[data-state="open"] {
+  color: var(--engaged);
+}
+
+.link[data-state="connecting"],
+.link[data-state="closed"] {
+  color: var(--caution);
+}
+
+.link[data-state="error"],
+.link[data-state="unconfigured"] {
+  color: var(--warn);
+}
+
+/* --- ATIS panel ---------------------------------------------------------- */
+
+.atis-actions,
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.atis-actions .tool,
+.row-actions .tool {
+  flex: 1;
+  justify-content: center;
+  border-color: var(--rule-strong);
+  color: var(--ink);
+}
+
+.atis-actions .tool:hover,
+.row-actions .tool:hover {
+  border-color: var(--data);
+  color: var(--data);
+}
+
+.atis {
+  display: grid;
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--glass-sunken);
+}
+
+.atis__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.atis__code {
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+
+.atis__letter {
+  font-family: var(--font-data);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  color: var(--data);
+}
+
+.atis__empty {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+.atis__rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s1) var(--s3);
+  margin: 0;
+}
+
+.atis__rows > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.atis__rows dt {
+  font-family: var(--font-display);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.atis__rows dd {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+}
+
+.atis__clouds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.cloud-chip {
+  padding: 1px var(--s2);
+  border: 1px solid var(--caution);
+  border-radius: var(--r-sm);
+  background: var(--caution-dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-xs);
+  color: var(--caution);
+}
+
+.cloud-chip--solid {
+  background: rgba(255, 176, 32, 0.28);
+}
+
+.cloud-chip--clear {
+  border-color: var(--engaged);
+  background: var(--engaged-dim);
+  color: var(--engaged);
+}
+
+.atis__raw summary {
+  font-family: var(--font-display);
+  font-size: var(--fs-xs);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.atis__raw summary:hover {
+  color: var(--ink);
+}
+
+.atis__raw pre {
+  margin: var(--s2) 0 0;
+  padding: var(--s2);
+  border-radius: var(--r-sm);
+  background: var(--glass);
+  font-family: var(--font-data);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* --- relay status -------------------------------------------------------- */
+
+.status {
+  display: grid;
+  gap: 1px;
+  padding: var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--glass-sunken);
+}
+
+.status__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.status__row span:last-child {
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  text-align: right;
+}
+
+.filed__box {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s3);
+  border: 1px solid var(--data);
+  border-radius: var(--r-md);
+  background: var(--data-dim);
+}
+
+.filed__text {
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--data);
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+@media (max-width: 74rem) {
+  .caution {
+    min-width: 0;
+  }
+
+  .caution__detail {
+    display: none;
+  }
+
+  .readout--link {
     display: none;
   }
 }

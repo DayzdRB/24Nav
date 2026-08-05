@@ -71,6 +71,8 @@
   --r-lg: 10px;
   --rail-width: 20.5rem;
   --profile-height: clamp(8.5rem, 21vh, 13rem);
+  --deck-height: clamp(10.5rem, 25vh, 14.5rem);
+  --inst-width: 8.75rem;
   --header-height: 3.5rem;
 
   /* --- depth ----------------------------------------------------------- */

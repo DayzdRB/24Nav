@@ -41,6 +41,9 @@ window.Nav = window.Nav || {};
     selection: null,
     listeners: [],
 
+    runwaySource: { departure: 'track', arrival: 'track' },
+    runwayManual: { departure: false, arrival: false },
+
     /* --- lookups -------------------------------------------------------- */
 
     point(code) {
@@ -235,42 +238,90 @@ window.Nav = window.Nav || {};
 
     setEndpoint(role, code) {
       if (!this.point(code)) return;
-      if (role === 'departure') {
-        this.departure = code;
-        this.departureRunway = this.defaultRunway(code, 'departure');
-      } else {
-        this.arrival = code;
-        this.arrivalRunway = this.defaultRunway(code, 'arrival');
-      }
+      const changed = code !== (role === 'departure' ? this.departure : this.arrival);
+      if (role === 'departure') this.departure = code;
+      else this.arrival = code;
+      // A manual runway belongs to the airport it was chosen at, so moving to a
+      // different airport releases it. Staying put keeps the pilot's choice.
+      if (changed) this.runwayManual[role] = false;
+      this.refreshRunway(role, changed);
       this.commit();
     },
 
-    defaultRunway(code, role) {
+    /**
+     * Chooses a runway the way a pilot would, in priority order:
+     *
+     *   1. The runway the ATIS says is in use.
+     *   2. Into wind, if the ATIS reports a wind direction.
+     *   3. Only as a last resort, whichever end points nearest the route track.
+     *
+     * The old code went straight to step 3, which is wrong: it picked IRFD 07L
+     * for a flight to IPPH purely because IPPH lies to the north-east, sending
+     * the departure out over LAVNO when the field may well be operating the 25s
+     * towards MOGTA. Destination bearing has nothing to do with runway choice.
+     */
+    chooseRunway(code, role) {
       const list = this.runwaysFor(code);
-      if (!list.length) return '';
+      if (!list.length) return { label: '', source: 'none' };
+
+      const nearestTo = (target) => {
+        let best = list[0];
+        let bestDelta = 361;
+        for (const runway of list) {
+          const delta = Math.abs(((Number(runway.heading) - target + 540) % 360) - 180);
+          if (delta < bestDelta) {
+            bestDelta = delta;
+            best = runway;
+          }
+        }
+        return best.label;
+      };
+
+      const atis = window.Nav.live?.atisFor?.(code) || null;
+
+      const inUse = role === 'departure' ? atis?.departureRunways : atis?.arrivalRunways;
+      for (const label of inUse || []) {
+        if (this.runwayGeometry(code, label)) return { label, source: 'atis' };
+      }
+
+      const wind = Number(atis?.wind?.direction);
+      if (Number.isFinite(wind)) {
+        // Into wind, so the runway heading matches the direction it blows from.
+        return { label: nearestTo(wind), source: 'wind' };
+      }
+
       const other = role === 'departure' ? this.point(this.arrival) : this.point(this.departure);
       const here = this.point(code);
-      if (!other || !here) return list[0].label;
-      // Pick the end that points the right way for the leg. Departing, that is
-      // the runway most aligned with the outbound track; arriving, the reverse.
+      if (!other || !here) return { label: list[0].label, source: 'first' };
       const track = role === 'departure'
         ? window.Nav.geo.bearing(here, other)
         : window.Nav.geo.bearing(other, here);
-      let best = list[0];
-      let bestDelta = 361;
-      for (const runway of list) {
-        const delta = Math.abs(((Number(runway.heading) - track + 540) % 360) - 180);
-        if (delta < bestDelta) {
-          bestDelta = delta;
-          best = runway;
-        }
-      }
-      return best.label;
+      return { label: nearestTo(track), source: 'track' };
+    },
+
+    defaultRunway(code, role) {
+      return this.chooseRunway(code, role).label;
+    },
+
+    /** Re-picks a runway unless the pilot has chosen one by hand. */
+    refreshRunway(role, force = false) {
+      const code = role === 'departure' ? this.departure : this.arrival;
+      if (this.runwayManual[role] && !force) return false;
+      const chosen = this.chooseRunway(code, role);
+      const current = role === 'departure' ? this.departureRunway : this.arrivalRunway;
+      this.runwaySource[role] = chosen.source;
+      if (chosen.label === current) return false;
+      if (role === 'departure') this.departureRunway = chosen.label;
+      else this.arrivalRunway = chosen.label;
+      return true;
     },
 
     setRunway(role, label) {
       if (role === 'departure') this.departureRunway = String(label || '');
       else this.arrivalRunway = String(label || '');
+      // Chosen by hand, so nothing may quietly override it.
+      this.runwayManual[role] = true;
+      this.runwaySource[role] = 'manual';
       this.commit();
     },
 
@@ -307,8 +358,10 @@ window.Nav = window.Nav || {};
       this.departure = this.arrival;
       this.arrival = dep;
       this.fixes.reverse();
-      this.departureRunway = this.defaultRunway(this.departure, 'departure');
-      this.arrivalRunway = this.defaultRunway(this.arrival, 'arrival');
+      this.runwayManual.departure = false;
+      this.runwayManual.arrival = false;
+      this.refreshRunway('departure', true);
+      this.refreshRunway('arrival', true);
       this.commit();
     },
 
@@ -480,8 +533,8 @@ window.Nav = window.Nav || {};
           this.arrivalRunway = saved.arrivalRunway;
         }
       }
-      if (!this.departureRunway) this.departureRunway = this.defaultRunway(this.departure, 'departure');
-      if (!this.arrivalRunway) this.arrivalRunway = this.defaultRunway(this.arrival, 'arrival');
+      if (!this.departureRunway) this.refreshRunway('departure', true);
+      if (!this.arrivalRunway) this.refreshRunway('arrival', true);
     },
   };
 

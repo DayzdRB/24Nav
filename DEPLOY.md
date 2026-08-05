@@ -1,167 +1,263 @@
-# 24Nav deployment, step 1
+# 24Nav step 2: live tracking, ATIS, guidance and the flight plan command
 
-Route planner, chart editor, distance tool and vertical profile. No API
-functions yet, so nothing here can break your Vercel function count. Auth,
-the relay and flight logging land in the next steps.
+Still zero Vercel Functions, so you remain at 0 of 12 on the Hobby plan. All the
+live data comes through your Universal Relay over one WebSocket.
 
-## 1. Create the repository
+## What changed in this build
 
-GitHub, **New repository**, name it `24nav`. Do not add a README or a
-`.gitignore`; the files below include one.
+**Runway selection was choosing the wrong end.** This is what made the runways
+look backwards. The geometry was always right, and I verified it numerically:
+with 25L selected the departure extension bears 247 and lands 0.2 NM from MOGTA,
+and with 07L it bears 067 and lands 0.4 NM from LAVNO. The fault was the automatic
+choice. It picked whichever end pointed nearest the straight line to the
+destination, so IRFD to IPPH selected 07L purely because IPPH lies to the
+north-east, sending the departure out over LAVNO.
 
-## 2. Add the text files
+Destination bearing has nothing to do with runway choice. Runways are now chosen
+in the order a pilot would:
 
-For each file, use **Add file > Create new file**. Type the full path into the
-filename box, including the folder. Typing `js/chart.js` creates the `js`
-folder automatically. Paste the contents, then **Commit changes**.
+1. The runway the ATIS says is in use.
+2. Into wind, if the ATIS reports a wind direction.
+3. Only with no ATIS at all, the old track-aligned guess.
+
+Each runway field now shows why it was chosen: **ATIS**, **wind**, **manual**, or
+**no ATIS** in amber to flag that it is only a guess. A runway you pick by hand is
+marked manual and will not be overridden by a later report; **Use ATIS runways**
+hands control back. Changing the airport releases a manual choice, selecting the
+same airport again keeps it.
+
+The practical upshot: connect the relay and the runways follow the field. Without
+ATIS you should expect to set them yourself, and the amber label tells you so.
+
+
+**Waypoint clicking is fixed.** The cause was mine, not your upload. `chart.js`
+called `svg.setPointerCapture()` on pointerdown, and pointer capture makes the
+browser retarget the subsequent `click` event to the SVG root, so
+`event.target.closest('.pick')` always returned null and nothing ever fired.
+Selection now runs on `pointerup` against the element recorded at pointerdown,
+which is the last target that can be trusted once capture is active. The `click`
+listener is gone entirely.
+
+My test suite passed all 110 checks against this bug because it stubbed
+`setPointerCapture` as a no-op, so the click target stayed on the real element.
+The suite now records capture and dispatches pointerup on the SVG root the way a
+browser does, and dispatches no click at all, so anything depending on click
+semantics fails in the test rather than in production.
+
+**Route endpoints are runway thresholds.** Departure and arrival now sit on the
+threshold of the runway in use rather than the airport reference point. Selecting
+25L puts the departure on the 25L threshold, and the arrival sits on the landing
+threshold, so distance, ETE, headings and the final approach are all measured
+from where you actually leave and touch down. Endpoints read as `IRFD/25L` in the
+route strip and along the profile axis, and changing the runway moves the endpoint
+and updates the distance.
+
+Verified against the dataset: from the 25L threshold, travelling along its
+published heading of 247 reaches the 07R threshold, which confirms the threshold
+coordinate is the start-of-roll end and that a departure extension continues
+straight off the far end of the runway rather than doubling back. IBAR and IUFO
+have no runway data, so those two fall back to the airport point.
+
+**Also fixed:** the chart attribution line no longer intercepts clicks in the
+bottom-right corner.
+
+## Two things to fix in the repository first
+
+**1. The chime was silent because of a filename mismatch.** Your repo has
+`assets/audio/audio_aircraft-cabin-chime.mp3` and
+`assets/audio/audio_777-master-warning.mp3`, but the old `app.js` asked for
+`cabin-chime.mp3` and `master-warning.mp3`. A missing audio file fails inside the
+play promise, so it failed quietly. The new loader tries every known filename in
+turn, so either naming works and you do not have to rename anything.
+
+**2. Delete the file called `download`.** It is still there in your latest upload. It is your `.gitignore` saved under the
+wrong name, so nothing is actually being ignored. This build includes a proper
+`.gitignore`; upload it and delete `download`.
+
+## Allowed origins
+
+Keep `ALLOWED_ORIGINS` exactly as you have it:
+
+```env
+ALLOWED_ORIGINS=https://24response.vercel.app,https://24nav.vercel.app
+```
+
+That is correct for two production sites. Only extend it if you start testing on
+Vercel preview deployments or localhost, since those are different hostnames:
+
+```env
+ALLOWED_ORIGINS=https://24response.vercel.app,https://24nav.vercel.app,https://24nav-*.vercel.app,http://localhost:3000
+```
+
+Worth knowing when you test: opening `/v1/status` in a browser tab is a top-level
+navigation and sends no `Origin` header, and `isOriginAllowed` returns true when
+the origin is absent. That page loads even if the allowlist is wrong. Use the
+**Test** button on the Live tab instead, which issues a real cross-origin fetch.
+
+## Files
+
+Add these new files, plus the whole `aircraft-icons/` folder:
+
+```
+js/runway-data.js
+js/instruments.js
+js/live.js
+aircraft-icons/          (38 files)
+```
+
+Replace these:
 
 ```
 index.html
-vercel.json
-package.json
-.gitignore
-DEPLOY.md
-styles/tokens.css
-styles/planner.css
-js/map-data.js
+js/app.js
 js/chart.js
 js/route.js
 js/profile.js
-js/app.js
-supabase/001_init.sql
+styles/planner.css
+styles/tokens.css
+.gitignore
 ```
 
-Order does not matter. If you would rather do it in one shot, use
-**Add file > Upload files** and drag the whole folder tree in; GitHub keeps the
-folder structure.
+`js/map-data.js`, `maps/`, `assets/audio/`, `vercel.json` and `package.json` are
+unchanged. On GitHub, **Add file > Upload files** and drag the whole tree in;
+same-path files are overwritten and the commit covers everything at once.
 
-## 3. Add the two audio files
+## Relay setup
 
-These are binary, so they cannot be pasted as text. Use
-**Add file > Upload files**, then drag both files in and set the path by
-dragging them into an `assets/audio` folder, or upload them and rename to:
+On Render, confirm the environment variable:
 
-```
-assets/audio/cabin-chime.mp3
-assets/audio/master-warning.mp3
+```env
+ALLOWED_ORIGINS=*
 ```
 
-`cabin-chime.mp3` plays when the self test finishes. `master-warning.mp3` plays
-on the overspeed warning.
+Once it works you can narrow it, but it must include your Vercel origin exactly
+and with no trailing slash:
 
-## 4. Add the chart artwork
-
-The `maps/` folder ships with this build, so there is nothing to copy out of
-24FlightBrief. Use **Add file > Upload files** and drag the whole `maps` folder
-in at once. It is 240 files and about 4 MB, and GitHub preserves the structure.
-
-If you already have `maps/` in the repository from an earlier attempt, uploading
-again simply overwrites identical files.
-
-These files are authored for a light background: land is `#333333`, aprons and
-taxiways are `#000000`, and every outline is stroked in `#000000`. That is why
-they looked missing on a dark chart. The stylesheet now inverts them, the same
-way your FlightBrief radar view does. Brightness is controlled by the `opacity`
-values on `.chart-base`, `.airport-ground` and `.airport-runway` in
-`styles/planner.css` if you want them louder or quieter.
-
-## 5. Connect Vercel
-
-Vercel, **Add New > Project**, import `24nav`.
-
-- Framework preset: **Other**
-- Build command: leave empty
-- Output directory: leave empty
-- Install command: leave empty
-
-Deploy. There is no build step, so it finishes in seconds.
-
-## 6. Supabase
-
-Nothing on the page reads Supabase yet, so this step is preparation. Run it now
-so the schema is stable before flight logging is written against it.
-
-1. Supabase dashboard, **SQL Editor**, **New query**.
-2. Paste all of `supabase/001_init.sql` and **Run**. It is safe to re-run.
-3. Check **Table Editor** for `profiles`, `flight_plans`, `flight_logs`,
-   `flight_log_events` and `atis_snapshots`.
-4. **Project Settings > API**. Copy the **Project URL** and the
-   **service_role** secret.
-5. Vercel, **Settings > Environment Variables**, add for Production:
-
-```
-SUPABASE_URL=https://YOUR-PROJECT.supabase.co
-SUPABASE_SECRET_KEY=<service_role secret>
+```env
+ALLOWED_ORIGINS=https://24nav.vercel.app,https://*.vercel.app,http://localhost:3000
 ```
 
-Do not put the service_role key anywhere the browser can reach. Every table has
-row level security on with no permissive policies, so the anon key can read
-nothing even if it leaks. Server functions use the secret key, which bypasses
-RLS.
+The relay checks `Origin` on the WebSocket upgrade and browsers always send it,
+so a mismatch here shows up as a connection that never opens.
 
-### Retention
+In 24Nav, open the **Live** tab, paste your Render host into **Relay address**
+and press **Connect**. A bare host is fine; the scheme and the `/v1/live` path
+are added for you, and a pasted `/v1/live` is stripped. Because the site is
+served over https the relay is always contacted over https and wss, so an
+`http://` address is upgraded rather than failing as mixed content.
 
-`purge_feed_identifiers()` strips feed-sourced Roblox usernames from logs older
-than 14 days, which is what the 24data terms require. Schedule it once:
+**Test** calls `/v1/status` and reports whether the relay can be reached at all,
+which separates a CORS problem from a wrong address.
 
-```sql
-select cron.schedule('purge-feed-identifiers', '0 4 * * *',
-  $$select public.purge_feed_identifiers()$$);
+## Supabase
+
+No schema changes this step. Nothing is written server side yet; saved plans and
+automatic flight logging are the next step and the tables from `001_init.sql`
+already cover them.
+
+## Using it
+
+**Adding waypoints.** This now works the way the DHL dispatch map does. Clicking a
+fix opens a panel at the cursor showing the fix name and asking where it goes:
+**Insert after [point]** or **Add to end**. It never guesses. Click a route point
+on the chart, or a row in the route strip, to set the insertion point; the
+selected point gets a dashed magenta halo. After each insert the insertion point
+advances to the fix you just added, so clicking several fixes in a row builds the
+route in order. Escape or a click away cancels.
+
+Clicking an **airport** offers **Set departure** or **Set arrival** instead, since
+airports are endpoints rather than route fixes.
+
+If this felt broken before, it was: the old build drew fix symbols with
+`fill: none`, so only the 1.25px stroke was clickable. Every symbol now carries an
+invisible hit circle, 9 units for fixes and 11 for airports, and a click is
+distinguished from a drag by measuring pixels moved rather than counting events.
+
+**Aircraft icons.** Ported from your DHL dispatch map, including the same type
+mapping, so an A330 gets the A330 silhouette and anything unrecognised falls back
+to `c0.svg`. The artwork is the ADS-B Radar pack at 512 square, nose up, solid
+black. Rather than a brittle tint chain it is forced white with
+`brightness(0) invert(1)` and given a coloured glow: amber for the rehearsal
+marker, green for a tracked live aircraft, red when the feed reports an emergency.
+The licence requires a backlink, so there is a small credit in the bottom-right
+of the chart. Leave it there.
+
+**Track a flight.** Live tab, type a Roblox username or an in-game callsign, press
+**Track**. **Use my callsign** takes whatever is on the Plan tab. The relay
+matches on either and returns the aircraft, its filed plan and the ATIS for both
+ends in one message. If the aircraft goes quiet for 15 seconds the instruments
+release rather than freezing on stale data.
+
+**Guidance.** The instruments are now positioned against the chart. Lateral sits
+directly beneath it in the same grid column, so its deviation scale spans the
+chart's width and its centre line falls on the chart's centre. Vertical is a tall
+scale down the right-hand side, with the aircraft controls beneath it.
+
+- Lateral reports the course, your track, how far off you are and which way to
+  turn. The deviation bar deflects towards the course, the way a real one does,
+  so a bar to the left means the track is to your left.
+- Vertical steers to the next vertex on your planned profile, not to the next
+  waypoint's altitude. On a direct route the next waypoint is the runway at
+  surface level, so steering to it would demand a descent while you are still
+  climbing. It shows what to make, how far you have, how far off plan you are,
+  and the rate needed against the rate you selected. The needed rate turns red
+  when it exceeds your selection by more than a quarter.
+
+**Rehearse without a flight.** The Aircraft card has **Drop marker**. Drag the
+aircraft around the chart and change its altitude to watch both instruments
+respond. Tracking a live flight takes over automatically.
+
+**Overspeed caution.** The button in the header is the annunciator. Dark when
+clear. Flashing red with the master warning tone when you are above 250 kt below
+3000 ft. Press it to acknowledge: the tone and the flash stop, the lamp stays
+amber while the condition is still true, and it re-arms only after you have come
+back inside the limit and broken it again. A changing airspeed does not restart
+the tone.
+
+**ATIS.** The ATIS tab shows both ends with the information letter, wind, QNH,
+runways in use and the cloud layers. **Use ATIS runways** sets your planned
+runways from the reports, skipping any runway that is not in the runway database.
+Cloud layers feed straight into the vertical profile as shaded decks, so you can
+see your cruise sitting inside an overcast deck.
+
+**Flight plan command.** Plan tab. Fill in the in-game callsign, aircraft and
+Roblox username, then **Copy**. The command is the ATC24 syntax:
+
+```
+/createflightplan ingamecallsign:… callsign:… aircraft:… flightrules:IFR
+departing:… arriving:… flightlevel:… ingamename:… route:…
 ```
 
-If `pg_cron` is not enabled, enable it under **Database > Extensions** first, or
-skip this and have the relay call the function on a timer in the next step.
+The in-game callsign and the filed callsign stay separate throughout, as you
+asked. Leave the filed one blank and it reuses the in-game one. Only named fixes
+go in `route:`; runway extensions are local geometry and are left out.
 
-## What you should see
+**Load a filed plan.** When you are tracking a flight that has filed through the
+bot, the Live tab offers **Load into planner**. It takes the endpoints, cruise
+level, callsigns and any route fixes that exist in the chart database, and tells
+you which fixes it could not resolve instead of silently giving you a shorter
+route.
 
-1. A power-up self test, then an **Enter Flight Deck** button. Clicking it plays
-   the cabin chime and opens the planner. The chime rides on that click on
-   purpose: browsers refuse to play audio without a user gesture, which is why
-   it was silent before.
-2. The chart with the coastline, airspace boundaries, airport grounds and runway
-   markings, plus 24 airports, 112 fixes and 9 sectors with their center
-   frequencies.
-3. A default IRFD to IPPH route. Click any cyan fix to append it. Select a fix
-   in the left list first and the next click inserts after it. The × removes it.
-4. Type a flight level into a fix row to force the profile through that altitude.
-5. **Measure** for a drag-anywhere distance line with both reciprocal headings.
-6. **Airport ground** toggles the 67 ground and runway overlays off if you want
-   a clean enroute picture.
-7. **Hide** on the profile bar collapses the vertical profile. The choice is
-   remembered.
+**Runway extensions.** Route tab, turn one on, then drag its diamond along the
+centreline on the chart. Drag it back onto the threshold to switch it off. The
+departure leg starts at the far end of the runway and runs out on the departure
+heading; the arrival leg starts at the threshold and runs back down the approach.
+Capped at 20 NM.
 
-Your route survives a refresh through `localStorage`. Nothing is stored
-server-side yet.
+**Waypoint altitudes.** Every waypoint now carries the altitude you should be at,
+shown in the route strip and on the profile. Type a flight level into a fix to
+make it a hard constraint and the profile bends through it. On a direct route the
+altitudes come purely from your climb and descent rates.
 
-## What this step fixed
+## Known limits
 
-- Text no longer highlights when you drag across the chart, and right-clicking
-  the chart or the profile no longer opens the browser menu.
-- The coast, boundaries, airport grounds and runways now render. They were always
-  loading; they were black artwork on a black chart.
-- The chart viewBox is now locked to its container aspect with a ResizeObserver,
-  so the map fills the panel instead of floating in dead space. The initial
-  measurement used to run before layout had settled.
-- The shell uses `100dvh` and the profile is height-clamped to 21vh, so
-  everything fits at 100% zoom. The collapse button covers short screens.
-- The chime plays reliably, on the entry click.
-
-## Still to come
-
-- Live traffic. Needs the relay, which is the next step.
-- Discord OAuth and saved plans. Step after that.
-- Cloud decks stay empty until the relay supplies ATIS. The parser is written and
-  tested against real ATIS bodies, including the case where `DEP RWY 26` must not
-  be mistaken for a cloud layer.
-- The overspeed warning is wired and tested but has nothing to watch yet.
-  `Nav.alerts.evaluate(aircraft)` is the entry point the relay will call.
-
-## Known limitations
-
-- Airport labels for IBTH and IUFO overlap at full-world zoom because they sit
-  31 map units apart. Zoom in and they separate.
-- Climb and descent gradients assume 3000 fpm at 250 kt and 2500 fpm at 280 kt
-  on the game's speed scale, which works out to 1216 and 905 ft per NM. Change
-  the two constants at the top of `js/profile.js` if your aircraft differ.
-- The 67 airport overlays are full-extent images, so heavy panning on a slow
-  machine may stutter. Turn **Airport ground** off if it does.
+- Flight plans only exist in the relay if they were filed while it was connected.
+  After a Render restart, refile. Tracking by username still works from telemetry.
+- Free Render instances sleep. The first connection after idle can take half a
+  minute; the client backs off and retries on its own.
+- Airport labels for IBTH and IUFO overlap at full-world zoom. Zoom in.
+- The 67 ground overlays are full-extent images. If panning stutters, turn
+  **Airport ground** off.
+- Climb and descent gradients are derived from your selected rates on the game's
+  speed scale, where an aircraft indicating 280 kt crosses the ground at 166 kt.
+  Constants are at the top of `js/profile.js`.

@@ -346,6 +346,13 @@ window.Nav = window.Nav || {};
       };
       window.Nav.profile.setAtis('departure', this.atis.departure?.content || '');
       window.Nav.profile.setAtis('arrival', this.atis.arrival?.content || '');
+
+      // A fresh report can change the runway in use, so re-pick unless the pilot
+      // has chosen one by hand.
+      let moved = false;
+      if (this.atis.departure) moved = route.refreshRunway('departure') || moved;
+      if (this.atis.arrival) moved = route.refreshRunway('arrival') || moved;
+      if (moved) route.commit();
     },
 
     atisFor(code) {
@@ -394,23 +401,20 @@ window.Nav = window.Nav || {};
       return { applied: true, unknown };
     },
 
-    /** Sets the planner runways from the ATIS in use at each end. */
+    /**
+     * Hands runway choice back to the ATIS at both ends, releasing any manual
+     * selection so later reports keep it up to date.
+     */
     adoptAtisRunways() {
       const route = window.Nav.route;
       const applied = [];
-      const departure = this.atisFor(route.departure);
-      const arrival = this.atisFor(route.arrival);
-      const pick = (list, code) => (list || []).find((label) => route.runwayGeometry(code, label)) || null;
-
-      const dep = pick(departure?.departureRunways, route.departure);
-      if (dep) {
-        route.departureRunway = dep;
-        applied.push(`${route.departure} ${dep}`);
-      }
-      const arr = pick(arrival?.arrivalRunways, route.arrival);
-      if (arr) {
-        route.arrivalRunway = arr;
-        applied.push(`${route.arrival} ${arr}`);
+      for (const role of ['departure', 'arrival']) {
+        const code = role === 'departure' ? route.departure : route.arrival;
+        if (!this.atisFor(code)) continue;
+        route.runwayManual[role] = false;
+        route.refreshRunway(role, true);
+        const label = role === 'departure' ? route.departureRunway : route.arrivalRunway;
+        if (label) applied.push(`${code} ${label} by ${route.runwaySource[role]}`);
       }
       if (applied.length) route.commit();
       return applied;

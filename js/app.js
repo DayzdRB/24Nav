@@ -564,6 +564,16 @@ window.Nav = window.Nav || {};
     }
     node.disabled = !list.length;
     if (selected) node.value = selected;
+
+    // Name the reason, so a surprising runway is never a mystery.
+    const badge = role === 'departure' ? dom.departureRunwaySource : dom.arrivalRunwaySource;
+    if (badge) {
+      const source = window.Nav.route.runwaySource[role];
+      badge.textContent = {
+        atis: 'ATIS', wind: 'wind', manual: 'manual', track: 'no ATIS', first: 'no data', none: '',
+      }[source] ?? '';
+      badge.dataset.source = source;
+    }
   }
 
   async function copyCommand() {
@@ -768,6 +778,7 @@ window.Nav = window.Nav || {};
       'app', 'boot', 'bootStatus', 'bootEnter', 'rail', 'railToggle',
       'tabRoute', 'tabPlan',
       'departure', 'arrival', 'departureRunway', 'arrivalRunway', 'swap',
+      'departureRunwaySource', 'arrivalRunwaySource',
       'cruise', 'climbVs', 'descentVs', 'planSpeed',
       'depExtOn', 'depExtNm', 'arrExtOn', 'arrExtNm',
       'planIngame', 'planFiled', 'planAircraft', 'planRules', 'planRoblox',
